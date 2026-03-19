@@ -8,9 +8,7 @@ import pandas as pd
 import numpy as np
 import requests
 from datetime import datetime, timedelta
-import auth
-import targets as tgt
-import watchlist as wl
+import gist_db as db   # ← 統一使用 Gist 資料庫
 
 st.set_page_config(page_title="AI Stock Bot", page_icon="🤖", layout="wide")
 st.markdown("""
@@ -66,7 +64,7 @@ if st.session_state.user is None:
             uname = st.text_input("帳號", placeholder="輸入帳號")
             upw   = st.text_input("密碼", type="password", placeholder="輸入密碼")
             if st.button("🔐 登入", type="primary", use_container_width=True):
-                u = auth.login(uname, upw)
+                u = db.login(uname, upw)
                 if u:
                     st.session_state.user = u
                     st.success(f"歡迎，{u['display_name']}！")
@@ -94,7 +92,7 @@ with st.sidebar:
                               value=user.get("telegram_chat_id",""),
                               placeholder="你的 Chat ID", key="sb_chat")
     if st.button("💾 儲存 Chat ID", use_container_width=True):
-        auth.update_telegram(user["username"], tg_chat)
+        db.update_telegram(user["username"], tg_chat)
         st.session_state.user["telegram_chat_id"] = tg_chat
         st.success("✅ 已儲存")
     st.markdown("---")
@@ -121,10 +119,11 @@ def fetch_stock(symbol):
             df = t.history(period="2y")
             if df.empty: df = t.history(period="max")
             if not df.empty:
-                return df, t.history(period="1mo",interval="60m"), \
-                       t.history(period="1mo",interval="30m"), t, clean
+                df60 = t.history(period="1mo",interval="60m")
+                df30 = t.history(period="1mo",interval="30m")
+                return df, df60, df30, clean
         except: continue
-    return None,None,None,None,clean
+    return None, None, None, clean
 
 @st.cache_data(ttl=3600)
 def fetch_name(symbol):
@@ -282,14 +281,13 @@ with tab_ana:
     if add_wl and si:
         cc2=si.strip().replace(".TW","").replace(".TWO","")
         nm2=fetch_name(cc2)
-        auth.add_to_watchlist(user["username"],cc2)
-        wl.add(cc2,nm2)
+        db.add_to_watchlist(user["username"],cc2,nm2)
         st.success(f"✅ {nm2}（{cc2}）已加入觀察名單")
 
     if run_btn:
         cc=si.strip().replace(".TW","").replace(".TWO","")
         with st.spinner(f"載入 {cc} ..."):
-            df_d,df_60,df_30,_ticker,cc=fetch_stock(cc)
+            df_d,df_60,df_30,cc=fetch_stock(cc)
             nm=fetch_name(cc)
         if df_d is None or len(df_d)<10:
             st.error("❌ 找不到資料，請確認代號"); st.stop()
@@ -320,9 +318,9 @@ with tab_ana:
         co3.markdown(f"波浪：{wchip(w_d)}{wchip(w_60)}{wchip(w_30)}",unsafe_allow_html=True)
 
         # 個人目標價快速顯示
-        my_tgt=tgt.get_user_target(user["username"],cc)
+        my_tgt=db.get_user_target(user["username"],cc)
         if my_tgt:
-            tc=tgt.check_target_reached(t["Close"],my_tgt["target_price"])
+            tc=db.check_target_reached(t["Close"],my_tgt["target_price"])
             st.info(f"🎯 你的目標價：**{my_tgt['target_price']:.2f}** ｜ {tc['status']} — {tc['desc']}")
 
         st.markdown("---")
@@ -411,26 +409,25 @@ with tab_wl:
     if ab and nc:
         code_in=nc.strip().replace(".TW","").replace(".TWO","")
         nm_in=nn.strip() or fetch_name(code_in)
-        auth.add_to_watchlist(user["username"],code_in)
-        wl.add(code_in,nm_in)
+        db.add_to_watchlist(user["username"],code_in,nm_in)
         st.success(f"✅ 已新增 {nm_in}（{code_in}）"); st.rerun()
 
     st.markdown("---")
-    my_codes=auth.get_user_watchlist(user["username"])
+    my_codes=db.get_user_watchlist_codes(user["username"])
     st.markdown(f"#### 追蹤中：{len(my_codes)} 支")
     if not my_codes:
         st.info("尚無觀察股票，請在上方新增 ☝️")
     else:
-        wl_data=wl.load()
+        wl_data=db._read_file("watchlist.json")
         for code in my_codes:
-            nm=wl_data.get(code,{}).get("name",code) if code in wl_data else code
-            my_tgt_e=tgt.get_user_target(user["username"],code)
+            nm=wl_data.get(code, code) if isinstance(wl_data.get(code), str) else code
+            my_tgt_e=db.get_user_target(user["username"],code)
             tgt_txt=f"🎯 目標：{my_tgt_e['target_price']:.2f}" if my_tgt_e else "尚無目標價"
             cl1,cl2,cl3,cl4=st.columns([1,2,2,1])
             cl1.markdown(f"**{code}**"); cl2.write(nm); cl3.caption(tgt_txt)
             with cl4:
                 if st.button("🗑️",key=f"rwl_{code}",use_container_width=True):
-                    auth.remove_from_watchlist(user["username"],code)
+                    db.remove_from_watchlist(user["username"],code)
                     st.success(f"已移除 {code}"); st.rerun()
 
     st.markdown("---")
@@ -460,12 +457,12 @@ with tab_tgt:
         with t4c: tc_btn=st.button("💾 儲存",type="primary",use_container_width=True,key="ts")
     if tc_btn and tc_code and tc_price>0:
         code_in=tc_code.strip().replace(".TW","").replace(".TWO","")
-        ok=tgt.set_target(user["username"],user["display_name"],code_in,tc_price,tc_note)
+        ok=db.set_target(user["username"],user["display_name"],code_in,tc_price,tc_note)
         st.success(f"✅ 已設定 {code_in} 目標價 {tc_price:.2f}") if ok else st.error("儲存失敗")
         st.rerun()
 
     st.markdown("---")
-    my_tgts=tgt.get_user_all_targets(user["username"])
+    my_tgts=db.get_user_all_targets(user["username"])
     st.markdown(f"#### 📌 我的目標價（{len(my_tgts)} 支）")
     if not my_tgts:
         st.info("尚無目標價，請在上方設定 ☝️")
@@ -483,7 +480,7 @@ with tab_tgt:
                 with r1:
                     st.markdown(f"**{nm}（{code}）**")
                     if price_now:
-                        tc2=tgt.check_target_reached(price_now,entry["target_price"])
+                        tc2=db.check_target_reached(price_now,entry["target_price"])
                         st.markdown(f"🎯 目標：**{entry['target_price']:.2f}** ｜ {tc2['status']}")
                         if entry.get("note"): st.caption(f"備註：{entry['note']}")
                 with r2:
@@ -495,14 +492,14 @@ with tab_tgt:
                     st.caption(f"設定於 {entry.get('updated_at','—')}")
                 with r3:
                     if st.button("🗑️",key=f"dt_{code}",use_container_width=True):
-                        tgt.delete_target(user["username"],code)
+                        db.delete_target(user["username"],code)
                         st.success(f"已刪除"); st.rerun()
 
     # 管理員總覽
     if is_admin:
         st.markdown("---")
         st.markdown("#### 👑 全用戶目標價總覽（管理員限定）")
-        all_tgts=tgt.get_all_targets_admin()
+        all_tgts=db.get_all_targets_admin()
         if not all_tgts:
             st.info("尚無任何用戶設定目標價")
         else:
@@ -528,7 +525,7 @@ with tab_acc:
         if st.button("更新密碼",type="primary"):
             if np1!=np2: st.error("❌ 兩次新密碼不一致")
             else:
-                ok,msg=auth.change_password(user["username"],op,np1)
+                ok,msg=db.change_password(user["username"],op,np1)
                 st.success(f"✅ {msg}") if ok else st.error(f"❌ {msg}")
     with st.container(border=True):
         st.markdown("#### 📲 Telegram 設定")
@@ -536,12 +533,12 @@ with tab_acc:
         cur_id=user.get("telegram_chat_id","")
         new_id=st.text_input("我的 Telegram Chat ID",value=cur_id,placeholder="從 @userinfobot 取得")
         if st.button("💾 儲存",type="primary",key="save_tg_acc"):
-            auth.update_telegram(user["username"],new_id)
+            db.update_telegram(user["username"],new_id)
             st.session_state.user["telegram_chat_id"]=new_id
             st.success("✅ 已儲存！Cloud Bot 下次將發送到此 ID")
     st.markdown("---")
     st.markdown("#### ℹ️ 帳號資訊")
-    info=auth.get_user(user["username"])
+    info=db.get_user(user["username"])
     ca,cb=st.columns(2)
     ca.metric("帳號",user["username"])
     ca.metric("角色","管理員👑" if is_admin else "一般用戶")
@@ -563,18 +560,18 @@ if is_admin and tab_admin:
             with u4: nr=st.selectbox("角色",["user","admin"],key="nr",label_visibility="collapsed")
             with u5: nb=st.button("➕",type="primary",use_container_width=True,key="nb")
             if nb:
-                ok,msg=auth.create_user(nu,npw,nd,nr)
+                ok,msg=db.create_user(nu,npw,nd,nr)
                 st.success(f"✅ {msg}") if ok else st.error(f"❌ {msg}"); st.rerun()
 
         st.markdown("---")
-        all_users=auth.get_all_users()
+        all_users=db.get_all_users()
         st.markdown(f"#### 👥 用戶列表（{len(all_users)} 人）")
         for uname,uinfo in all_users.items():
             rbadge=("<span class='badge-admin'>👑 管理員</span>" if uinfo.get("role")=="admin"
                     else "<span class='badge-user'>👤 一般用戶</span>")
             tg_s="✅ 已設定" if uinfo.get("telegram_chat_id") else "❌ 未設定"
             wl_n=len(uinfo.get("watchlist",[]))
-            tgt_n=len(tgt.get_user_all_targets(uname))
+            tgt_n=len(db.get_user_all_targets(uname))
             with st.container(border=True):
                 r1,r2,r3,r4=st.columns([3,2,2,1])
                 with r1:
@@ -588,11 +585,11 @@ if is_admin and tab_admin:
                     rpw=st.text_input("重設密碼",type="password",placeholder="輸入新密碼",
                                       key=f"rpw_{uname}",label_visibility="collapsed")
                     if st.button("🔑 重設",key=f"rset_{uname}",use_container_width=True):
-                        ok,msg=auth.admin_reset_password(uname,rpw)
+                        ok,msg=db.admin_reset_password(uname,rpw)
                         st.success(msg) if ok else st.error(msg)
                 with r4:
                     if uname!=user["username"]:
                         if st.button("🗑️",key=f"du_{uname}",use_container_width=True):
-                            ok,msg=auth.delete_user(uname)
+                            ok,msg=db.delete_user(uname)
                             st.success(msg) if ok else st.error(msg); st.rerun()
                     else: st.caption("（自己）")
