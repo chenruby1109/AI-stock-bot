@@ -1,8 +1,8 @@
 """
-AI-stock-bot — Streamlit 分析主程式
-Version: 1.0.0
-SOP 定義：KD金叉/多頭 + MACD翻紅 + SAR多方 (三線全達 → 觸發)
-軟提示：波浪 3-3/3-5/3浪/5浪 + 量比 ≥ 1.5
+AI-stock-bot — app.py  v1.1
+新功能：持久化自選股管理（watchlist.json，不刪除永久保存）
+SOP：KD金叉/多頭 + MACD翻紅 + SAR多方（三線全達觸發）
+軟提示：波浪 3-3/3-5/3-1/4-c + 量比 ≥ 1.5
 """
 
 import streamlit as st
@@ -10,7 +10,8 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
+from watchlist import get_all, add_stock, remove_stock, update_note, lookup_name
 
 # ─────────────────────────────────────────
 # 頁面設定
@@ -19,578 +20,452 @@ st.set_page_config(page_title="AI Stock Bot", page_icon="🤖", layout="wide")
 
 st.markdown("""
 <style>
-/* ── 全域字體 ── */
 body { font-family: 'Segoe UI', sans-serif; }
 
-/* ── SOP 觸發橫幅 ── */
-@keyframes glow {
-    0%,100% { box-shadow: 0 0 6px #00c853; }
-    50%      { box-shadow: 0 0 22px 6px #00c853; }
-}
-.sop-banner-buy {
-    background: linear-gradient(135deg,#003300,#004d00,#006600);
-    border: 2px solid #00c853;
-    border-radius: 12px;
-    padding: 22px 28px;
-    margin: 14px 0;
-    animation: glow 2s ease-in-out infinite;
-    color: #fff;
-}
-@keyframes glow-sell {
-    0%,100% { box-shadow: 0 0 6px #ff1744; }
-    50%      { box-shadow: 0 0 22px 6px #ff1744; }
-}
-.sop-banner-sell {
-    background: linear-gradient(135deg,#330000,#4d0000,#660000);
-    border: 2px solid #ff1744;
-    border-radius: 12px;
-    padding: 22px 28px;
-    margin: 14px 0;
-    animation: glow-sell 2s ease-in-out infinite;
-    color: #fff;
-}
-.sop-title  { font-size: 24px; font-weight: 900; letter-spacing: 1px; }
-.sop-sub    { font-size: 15px; margin-top: 8px; line-height: 1.9; }
-.sop-hint   {
-    background: rgba(255,255,255,0.1);
-    border-radius: 8px;
-    padding: 10px 14px;
-    margin-top: 12px;
-    font-size: 14px;
-    color: #ffe082;
-}
+@keyframes glow   { 0%,100%{box-shadow:0 0 6px #00c853} 50%{box-shadow:0 0 22px 8px #00c853} }
+@keyframes glow-s { 0%,100%{box-shadow:0 0 6px #ff1744} 50%{box-shadow:0 0 22px 8px #ff1744} }
+.sop-buy  { background:linear-gradient(135deg,#003300,#006600);
+            border:2px solid #00c853; border-radius:12px; padding:22px 28px;
+            margin:14px 0; animation:glow 2s ease-in-out infinite; color:#fff; }
+.sop-sell { background:linear-gradient(135deg,#330000,#660000);
+            border:2px solid #ff1744; border-radius:12px; padding:22px 28px;
+            margin:14px 0; animation:glow-s 2s ease-in-out infinite; color:#fff; }
+.sop-title { font-size:22px; font-weight:900; }
+.sop-sub   { font-size:15px; margin-top:8px; line-height:2; }
+.sop-hint  { background:rgba(255,255,255,.10); border-radius:8px;
+             padding:9px 14px; margin-top:10px; font-size:14px; color:#ffe082; }
 
-/* ── 觀察橫幅 ── */
-.watch-banner {
-    background: #f9f9f9;
-    border: 2px dashed #bbb;
-    border-radius: 10px;
-    padding: 14px 20px;
-    margin: 10px 0;
-    font-size: 14px;
-    color: #444;
-}
+.watch-box { background:#f8f8f8; border:2px dashed #bbb; border-radius:10px;
+             padding:14px 20px; margin:10px 0; font-size:14px; color:#444; }
 
-/* ── 區塊卡片 ── */
-.card {
-    background: #fff;
-    border: 1px solid #e0e0e0;
-    border-radius: 10px;
-    padding: 18px 22px;
-    margin-bottom: 14px;
-}
-.card-title { font-size: 17px; font-weight: 700; margin-bottom: 10px; color: #1a237e; }
+.wl-hdr { display:flex; gap:8px; padding:8px 14px; background:#e8eaf6;
+          font-weight:700; font-size:13px; border-radius:6px 6px 0 0; color:#283593; }
 
-/* ── 條件列表 ── */
-.cond-row { font-size: 15px; line-height: 2; }
-.pass  { color: #2e7d32; font-weight: 600; }
-.fail  { color: #c62828; font-weight: 600; }
-.hint  { color: #e65100; font-weight: 600; }
+.wc { display:inline-block; font-size:13px; font-weight:700;
+      padding:2px 10px; border-radius:20px; margin-right:5px; }
+.wb { background:#e8f5e9; color:#2e7d32; border:1px solid #a5d6a7; }
+.wr { background:#ffebee; color:#c62828; border:1px solid #ef9a9a; }
+.wn { background:#fff3e0; color:#e65100; border:1px solid #ffcc80; }
 
-/* ── 波段標籤 ── */
-.wave-chip {
-    display: inline-block;
-    font-size: 13px;
-    font-weight: bold;
-    padding: 2px 10px;
-    border-radius: 20px;
-    margin-right: 6px;
-}
-.wave-bull { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
-.wave-bear { background: #ffebee; color: #c62828; border: 1px solid #ef9a9a; }
-.wave-neut { background: #fff3e0; color: #e65100; border: 1px solid #ffcc80; }
+.px-up   { color:#d32f2f; font-weight:800; font-size:28px; }
+.px-down { color:#388e3c; font-weight:800; font-size:28px; }
+.px-flat { color:#555;    font-weight:800; font-size:28px; }
 
-/* ── 股價大字 ── */
-.price-up   { color: #d32f2f; font-weight: 800; font-size: 28px; }
-.price-down { color: #388e3c; font-weight: 800; font-size: 28px; }
-.price-flat { color: #555;    font-weight: 800; font-size: 28px; }
+.cr { font-size:15px; line-height:2.1; }
+.ok { color:#2e7d32; font-weight:600; }
+.ng { color:#c62828; font-weight:600; }
+.ht { color:#e65100; font-weight:600; }
 </style>
 """, unsafe_allow_html=True)
+
+# ─────────────────────────────────────────
+# Session state
+# ─────────────────────────────────────────
+for k in ["wl_msg", "wl_msg_type"]:
+    if k not in st.session_state:
+        st.session_state[k] = ""
 
 # ─────────────────────────────────────────
 # 側邊欄
 # ─────────────────────────────────────────
 with st.sidebar:
-    st.image("https://raw.githubusercontent.com/primer/octicons/main/icons/graph-24.svg", width=36)
     st.title("🤖 AI Stock Bot")
-    st.caption("V1.0  |  SOP 三線觸發版")
-
+    st.caption("V1.1  |  SOP 三線觸發版")
     st.markdown("---")
-    stock_input = st.text_input("📌 輸入股票代號", value="2330", placeholder="如 2330, 2454")
-    run_btn = st.button("🚀 開始分析", type="primary", use_container_width=True)
-
+    st.subheader("📌 分析個股")
+    stock_input = st.text_input("輸入代號", value="2330", placeholder="如 2330")
+    run_btn     = st.button("🚀 開始分析", type="primary", use_container_width=True)
     st.markdown("---")
     st.subheader("📲 Telegram 推播")
-    tg_token = st.text_input("Bot Token", type="password", placeholder="從 BotFather 取得")
-    tg_chat  = st.text_input("Chat ID",   placeholder="你的頻道或個人 ID")
-
+    tg_token = st.text_input("Bot Token", type="password")
+    tg_chat  = st.text_input("Chat ID")
     st.markdown("---")
-    st.caption("SOP 條件說明：")
-    st.markdown("""
-- ✅ **必達 (硬觸發)**
-  - KD 金叉 / 多頭排列
-  - MACD Hist 翻紅
-  - SAR 多方支撐
-- 💡 **加分提示 (軟條件)**
-  - 波浪：3-3 / 3-5 / 3浪 / 5浪
-  - 量比 ≥ 1.5
-""")
+    st.caption("""**SOP 邏輯**
+✅ 硬觸發（三線全達才發訊號）
+- KD 金叉 / 多頭排列
+- MACD Hist 翻紅
+- SAR 多方支撐
+
+💡 軟提示（加分，不影響觸發）
+- 波浪：3-3 / 3-5 / 3-1 / 4-c
+- 量比 ≥ 1.5""")
 
 # ─────────────────────────────────────────
-# ① 資料取得
+# Tabs
 # ─────────────────────────────────────────
+tab_analysis, tab_watchlist = st.tabs(["📊 個股分析", "⭐ 自選股管理"])
+
+
+# ═══════════════════════════════════════════
+# 共用指標函數
+# ═══════════════════════════════════════════
 @st.cache_data(ttl=1800)
 def fetch_stock(symbol: str):
-    """取得日線、60分、30分 K 線及 ticker 物件"""
     clean = symbol.strip().replace(".TW","").replace(".TWO","")
-    for suffix in [".TW", ".TWO"]:
-        t = yf.Ticker(clean + suffix)
+    for sfx in [".TW",".TWO"]:
+        t = yf.Ticker(clean+sfx)
         try:
             df = t.history(period="2y")
             if df.empty: df = t.history(period="max")
             if not df.empty:
-                df60 = t.history(period="1mo", interval="60m")
-                df30 = t.history(period="1mo", interval="30m")
-                return df, df60, df30, t, clean
-        except:
-            continue
-    return None, None, None, None, clean
+                return df, t.history(period="1mo",interval="60m"), \
+                           t.history(period="1mo",interval="30m"), t, clean
+        except: continue
+    return None,None,None,None,clean
 
-@st.cache_data(ttl=3600)
-def fetch_name(symbol: str) -> str:
-    try:
-        r   = requests.get("https://histock.tw/stock/rank.aspx?p=all",
-                           headers={"User-Agent":"Mozilla/5.0"}, timeout=5)
-        dfs = pd.read_html(r.text)
-        df  = dfs[0]
-        cc  = [c for c in df.columns if "代號" in str(c)][0]
-        cn  = [c for c in df.columns if "股票" in str(c) or "名稱" in str(c)][0]
-        for _, row in df.iterrows():
-            code = "".join(c for c in str(row[cc]) if c.isdigit())
-            if code == symbol: return str(row[cn])
-    except: pass
-    return symbol
 
-# ─────────────────────────────────────────
-# ② 技術指標
-# ─────────────────────────────────────────
-def _sar(high, low, af0=0.02, af_max=0.2):
-    n   = len(high)
-    sar = np.zeros(n); trend = np.ones(n)
-    ep  = np.zeros(n); af    = np.full(n, af0)
-    sar[0]=low[0]; ep[0]=high[0]
-    for i in range(1, n):
-        sar[i] = sar[i-1] + af[i-1]*(ep[i-1]-sar[i-1])
-        if trend[i-1] == 1:
-            if low[i] < sar[i]:
-                trend[i]=-1; sar[i]=ep[i-1]; ep[i]=low[i]; af[i]=af0
+def _sar(hi, lo, a=0.02, am=0.2):
+    n=len(hi); sar=np.zeros(n); tr=np.ones(n); ep=np.zeros(n); af=np.full(n,a)
+    sar[0]=lo[0]; ep[0]=hi[0]
+    for i in range(1,n):
+        sar[i]=sar[i-1]+af[i-1]*(ep[i-1]-sar[i-1])
+        if tr[i-1]==1:
+            if lo[i]<sar[i]: tr[i]=-1; sar[i]=ep[i-1]; ep[i]=lo[i]; af[i]=a
             else:
-                trend[i]=1
-                if high[i]>ep[i-1]: ep[i]=high[i]; af[i]=min(af[i-1]+af0,af_max)
+                tr[i]=1
+                if hi[i]>ep[i-1]: ep[i]=hi[i]; af[i]=min(af[i-1]+a,am)
                 else: ep[i]=ep[i-1]; af[i]=af[i-1]
-                sar[i]=min(sar[i], low[i-1])
-                if i>1: sar[i]=min(sar[i], low[i-2])
+                sar[i]=min(sar[i],lo[i-1])
+                if i>1: sar[i]=min(sar[i],lo[i-2])
         else:
-            if high[i] > sar[i]:
-                trend[i]=1; sar[i]=ep[i-1]; ep[i]=high[i]; af[i]=af0
+            if hi[i]>sar[i]: tr[i]=1; sar[i]=ep[i-1]; ep[i]=hi[i]; af[i]=a
             else:
-                trend[i]=-1
-                if low[i]<ep[i-1]: ep[i]=low[i]; af[i]=min(af[i-1]+af0,af_max)
+                tr[i]=-1
+                if lo[i]<ep[i-1]: ep[i]=lo[i]; af[i]=min(af[i-1]+a,am)
                 else: ep[i]=ep[i-1]; af[i]=af[i-1]
-                sar[i]=max(sar[i], high[i-1])
-                if i>1: sar[i]=max(sar[i], high[i-2])
+                sar[i]=max(sar[i],lo[i-1])
+                if i>1: sar[i]=max(sar[i],lo[i-2])
     return sar
 
-def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
+
+def add_ind(df):
     if df is None or df.empty: return df
-    n = len(df)
-
-    # SAR
-    df["SAR"] = _sar(df["High"].values, df["Low"].values) if n > 5 else np.nan
-
-    # 均線
-    for p in [5, 10, 20, 60, 120]:
-        df[f"MA{p}"] = df["Close"].rolling(p).mean() if n >= p else np.nan
-
-    # KD (9,3,3)
-    h9 = df["High"].rolling(9).max()
-    l9 = df["Low"].rolling(9).min()
-    rsv = ((df["Close"] - l9) / (h9 - l9) * 100).fillna(50)
-    k, d = [50.0], [50.0]
-    for v in rsv:
-        k.append(k[-1]*2/3 + v/3)
-        d.append(d[-1]*2/3 + k[-1]/3)
-    df["K"] = k[1:]; df["D"] = d[1:]
-
-    # MACD (12,26,9)
-    e12 = df["Close"].ewm(span=12, adjust=False).mean()
-    e26 = df["Close"].ewm(span=26, adjust=False).mean()
-    df["DIF"]       = e12 - e26
-    df["MACD_SIG"]  = df["DIF"].ewm(span=9, adjust=False).mean()
-    df["MACD_HIST"] = df["DIF"] - df["MACD_SIG"]
-
-    # ATR
-    df["TR"]  = np.maximum(df["High"]-df["Low"],
-                np.abs(df["High"]-df["Close"].shift(1)))
-    df["ATR"] = df["TR"].rolling(14).mean()
-
-    # 布林
-    df["BB_MID"] = df["Close"].rolling(20).mean()
-    std          = df["Close"].rolling(20).std()
-    df["BB_UP"]  = df["BB_MID"] + 2*std
-    df["BB_LO"]  = df["BB_MID"] - 2*std
-    df["BB_PCT"] = (df["Close"] - df["BB_LO"]) / (df["BB_UP"] - df["BB_LO"])
-
-    # 量均
-    df["VOL_MA5"] = df["Volume"].rolling(5).mean()
-
+    n=len(df)
+    df["SAR"]=_sar(df["High"].values,df["Low"].values) if n>5 else np.nan
+    for p in [5,10,20,60,120]:
+        df[f"MA{p}"]=df["Close"].rolling(p).mean() if n>=p else np.nan
+    h9=df["High"].rolling(9).max(); l9=df["Low"].rolling(9).min()
+    rsv=((df["Close"]-l9)/(h9-l9)*100).fillna(50)
+    k,d=[50.0],[50.0]
+    for v in rsv: k.append(k[-1]*2/3+v/3); d.append(d[-1]*2/3+k[-1]/3)
+    df["K"]=k[1:]; df["D"]=d[1:]
+    e12=df["Close"].ewm(span=12,adjust=False).mean()
+    e26=df["Close"].ewm(span=26,adjust=False).mean()
+    df["DIF"]=e12-e26; df["MACD_SIG"]=df["DIF"].ewm(span=9,adjust=False).mean()
+    df["MACD_HIST"]=df["DIF"]-df["MACD_SIG"]
+    df["TR"]=np.maximum(df["High"]-df["Low"],np.abs(df["High"]-df["Close"].shift(1)))
+    df["ATR"]=df["TR"].rolling(14).mean()
+    df["BB_MID"]=df["Close"].rolling(20).mean(); std=df["Close"].rolling(20).std()
+    df["BB_UP"]=df["BB_MID"]+2*std; df["BB_LO"]=df["BB_MID"]-2*std
+    df["BB_PCT"]=(df["Close"]-df["BB_LO"])/(df["BB_UP"]-df["BB_LO"])
+    df["VOL_MA5"]=df["Volume"].rolling(5).mean()
     return df
 
-# ─────────────────────────────────────────
-# ③ 波浪識別
-# ─────────────────────────────────────────
-_BULL_WAVES = {"3-1","3-3","3-5","4-a","4-b","4-c"}
-_BEAR_WAVES = {"C-3","C-5","B-a","B-c"}
-_HINT_WAVES = {"3-3","3-5"}          # 軟提示波浪 (加入 3浪/5浪 概念)
 
-def wave_label(df: pd.DataFrame) -> str:
-    if df is None or len(df) < 15: return "N/A"
-    c   = df["Close"].iloc[-1]
-    m20 = df["MA20"].iloc[-1]  if not pd.isna(df["MA20"].iloc[-1])  else c
-    m60 = df["MA60"].iloc[-1]  if not pd.isna(df["MA60"].iloc[-1])  else c
-    k   = df["K"].iloc[-1];  pk = df["K"].iloc[-2]
-    h   = df["MACD_HIST"].iloc[-1]; ph = df["MACD_HIST"].iloc[-2]
-
-    if c >= m60:                          # 多頭大趨勢
-        if c > m20:
-            if h > 0 and h > ph: return "3-5" if k > 80 else "3-3"
-            if h > 0:            return "3-a"
+def wave_lbl(df):
+    if df is None or len(df)<15: return "N/A"
+    c=df["Close"].iloc[-1]
+    m20=df["MA20"].iloc[-1] if not pd.isna(df["MA20"].iloc[-1]) else c
+    m60=df["MA60"].iloc[-1] if not pd.isna(df["MA60"].iloc[-1]) else c
+    k=df["K"].iloc[-1]; pk=df["K"].iloc[-2]
+    h=df["MACD_HIST"].iloc[-1]; ph=df["MACD_HIST"].iloc[-2]
+    if c>=m60:
+        if c>m20:
+            if h>0 and h>ph: return "3-5" if k>80 else "3-3"
+            if h>0: return "3-a"
             return "3-1"
         else:
-            if k < 20:   return "4-c"
-            if k < pk:   return "4-a"
+            if k<20: return "4-c"
+            if k<pk: return "4-a"
             return "4-b"
-    else:                                 # 空頭大趨勢
-        if c < m20:
-            return "C-5" if k < 20 else "C-3"
-        return "B-c" if k > 80 else "B-a"
-
-def wave_hint(label: str) -> str | None:
-    """波浪軟提示文字，None 代表無提示"""
-    hints = {
-        "3-3": "🌊 3-3 主升急漲，波浪共振加分！",
-        "3-5": "🏔️ 3-5 噴出末段，注意高點，波浪加分！",
-        "3-1": "🌱 3-1 初升啟動，潛力波浪提示",
-        "4-c": "🪤 4-c 修正末端，底部波浪提示",
-    }
-    return hints.get(label)
-
-# ─────────────────────────────────────────
-# ④ 費波那契
-# ─────────────────────────────────────────
-def fibonacci(df: pd.DataFrame) -> dict:
-    w    = min(len(df), 120)
-    hi   = df["High"].iloc[-w:].max()
-    lo   = df["Low"].iloc[-w:].min()
-    diff = hi - lo
-    return {
-        "high": hi, "low": lo,
-        "0.236": hi - diff*0.236,
-        "0.382": hi - diff*0.382,
-        "0.500": hi - diff*0.500,
-        "0.618": hi - diff*0.618,
-    }
-
-# ─────────────────────────────────────────
-# ⑤ 核心 SOP 判斷
-# ─────────────────────────────────────────
-def sop_check(df: pd.DataFrame) -> dict:
-    """
-    回傳 SOP 各條件狀態與最終訊號。
-    hard_pass = True  → 三線全達，發出 BUY / SELL
-    soft hints → 波浪 & 量比 提示
-    """
-    if df is None or len(df) < 30:
-        return {"signal": None}
-
-    t = df.iloc[-1]; p = df.iloc[-2]
-
-    # ── 硬條件 ──
-    kd_cross = (p["K"] < p["D"]) and (t["K"] > t["D"])
-    kd_bull  = t["K"] > t["D"]
-    cond_kd  = kd_bull or kd_cross
-    kd_label = "今日金叉 ✨" if kd_cross else ("多頭排列" if kd_bull else "空方排列")
-
-    cond_macd  = t["MACD_HIST"] > 0
-    macd_label = "今日翻紅 🔴" if (p["MACD_HIST"]<=0 and t["MACD_HIST"]>0) else \
-                 ("紅柱延伸"   if cond_macd else "綠柱整理")
-
-    cond_sar  = t["Close"] > t["SAR"]
-    sar_label = "多方支撐 ↑" if cond_sar else "空方壓力 ↓"
-
-    hard_pass = cond_kd and cond_macd and cond_sar
-
-    # ── 軟條件 ──
-    vol_ma5   = t["VOL_MA5"] if t["VOL_MA5"] > 0 else 1
-    vol_ratio = round(t["Volume"] / vol_ma5, 1)
-    cond_vol  = vol_ratio >= 1.5
-
-    # 波浪 (日線)
-    wlabel    = wave_label(df)
-    cond_wave = wlabel in ("3-3","3-5","3-1","4-c")  # 3浪/5浪系列
-
-    # ── 訊號邏輯 ──
-    signal = None
-    if hard_pass:
-        # 高檔出場判斷：SAR 多但波浪已進 3-5 或 B-c
-        if wlabel in ("3-5","B-c","C-3"):
-            signal = "SELL"
-        else:
-            signal = "BUY"
-
-    return {
-        "signal":      signal,
-        "hard_pass":   hard_pass,
-        "cond_kd":     cond_kd,   "kd_label":   kd_label,
-        "cond_macd":   cond_macd, "macd_label": macd_label,
-        "cond_sar":    cond_sar,  "sar_label":  sar_label,
-        "cond_vol":    cond_vol,  "vol_ratio":  vol_ratio,
-        "cond_wave":   cond_wave, "wave_label": wlabel,
-        "wave_hint":   wave_hint(wlabel),
-    }
-
-# ─────────────────────────────────────────
-# ⑥ Telegram 推播
-# ─────────────────────────────────────────
-def push_telegram(token: str, chat_id: str, signal: str, name: str, code: str,
-                  price: float, sop: dict, buy_agg: float, buy_con: float, stop: float) -> bool:
-    if not token or not chat_id or "填" in token: return False
-    emoji  = "🚀" if signal == "BUY" else "⚠️"
-    action = "BUY — SOP 三線觸發！" if signal == "BUY" else "SELL — 高檔出場訊號！"
-    price_lines = (f"🦁 激進買點：<b>{buy_agg:.2f}</b>\n"
-                   f"🐢 保守買點：<b>{buy_con:.2f}</b>\n"
-                   f"🛑 建議停損：<b>{stop:.2f}</b>") if signal=="BUY" else \
-                  f"⚡ 建議出場：<b>{price:.2f}</b> 附近\n🛑 停損：<b>{stop:.2f}</b>"
-
-    soft_lines = ""
-    if sop["cond_vol"]:  soft_lines += f"\n💡 量比 {sop['vol_ratio']}x ≥ 1.5 (加分)"
-    if sop["wave_hint"]: soft_lines += f"\n{sop['wave_hint']}"
-
-    msg = (f"{emoji} <b>AI Stock Bot — SOP 訊號</b> {emoji}\n\n"
-           f"<b>{name}（{code}）</b>\n"
-           f"💰 現價：{price:.2f}\n"
-           f"━━━━━━━━━━━━━━━━━━\n"
-           f"<b>{action}</b>\n"
-           f"✅ KD：{sop['kd_label']}\n"
-           f"✅ MACD：{sop['macd_label']}\n"
-           f"✅ SAR：{sop['sar_label']}\n"
-           f"━━━━━━━━━━━━━━━━━━\n"
-           f"{price_lines}"
-           f"{soft_lines}\n\n"
-           f"<i>⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}</i>")
-    try:
-        r = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
-            timeout=8
-        )
-        return r.status_code == 200
-    except:
-        return False
-
-# ─────────────────────────────────────────
-# ⑦ 主顯示邏輯
-# ─────────────────────────────────────────
-def _v(row, key, fallback=np.nan):
-    v = row.get(key, fallback)
-    return fallback if pd.isna(v) else v
-
-def wave_chip_html(label: str) -> str:
-    cls = "wave-bull" if label.startswith(("3","4")) else \
-          "wave-bear" if label.startswith(("C","B")) else "wave-neut"
-    return f"<span class='wave-chip {cls}'>{label}</span>"
-
-if run_btn:
-    code_clean = stock_input.strip().replace(".TW","").replace(".TWO","")
-    with st.spinner(f"正在載入 {code_clean} 資料..."):
-        df_d, df_60, df_30, ticker, code_clean = fetch_stock(code_clean)
-        name = fetch_name(code_clean)
-
-    if df_d is None or len(df_d) < 10:
-        st.error(f"❌ 找不到 {code_clean} 資料，請確認代號是否正確。")
-        st.stop()
-
-    # 計算指標
-    df_d  = add_indicators(df_d)
-    df_60 = add_indicators(df_60) if df_60 is not None and not df_60.empty else None
-    df_30 = add_indicators(df_30) if df_30 is not None and not df_30.empty else None
-
-    t = df_d.iloc[-1]; p = df_d.iloc[-2]
-
-    # 計算各值
-    sop  = sop_check(df_d)
-    fib  = fibonacci(df_d)
-    atr  = _v(t, "ATR", t["Close"]*0.02)
-
-    w_d  = wave_label(df_d)
-    w_60 = wave_label(df_60) if df_60 is not None else "N/A"
-    w_30 = wave_label(df_30) if df_30 is not None else "N/A"
-
-    ma5  = _v(t, "MA5",  fib["0.236"])
-    ma20 = _v(t, "MA20", fib["0.382"])
-    buy_agg = max(ma5,  fib["0.236"])
-    buy_con = max(ma20, fib["0.382"])
-    stop    = max(t["Close"] - atr*2, fib["0.618"])
-
-    vol_ma5   = t["VOL_MA5"] if t["VOL_MA5"] > 0 else 1
-    vol_ratio = round(t["Volume"] / vol_ma5, 1)
-
-    diff     = t["Close"] - p["Close"]
-    diff_pct = diff / p["Close"] * 100
-    p_cls    = "price-up" if diff > 0 else "price-down" if diff < 0 else "price-flat"
-    p_sign   = "+" if diff > 0 else ""
-
-    # ── 標題區 ──
-    st.markdown(f"## 📊 {name}（{code_clean}）")
-    c1, c2, c3 = st.columns([2,2,3])
-    c1.markdown(f"<span class='{p_cls}'>{t['Close']:.2f}</span>", unsafe_allow_html=True)
-    c1.caption(f"{p_sign}{diff:.2f}（{p_sign}{diff_pct:.2f}%）")
-    c2.metric("成交量", f"{int(t['Volume']/1000)} 張", f"量比 {vol_ratio}x")
-    c3.markdown(
-        f"波浪結構：{wave_chip_html(w_d)}{wave_chip_html(w_60)}{wave_chip_html(w_30)}",
-        unsafe_allow_html=True
-    )
-
-    st.markdown("---")
-
-    # ════════════════════════════════════════
-    # SOP 訊號區塊
-    # ════════════════════════════════════════
-    signal = sop["signal"]
-
-    if signal in ("BUY", "SELL"):
-        css_cls = "sop-banner-buy" if signal == "BUY" else "sop-banner-sell"
-        action_txt = "🚀 BUY — SOP 三線全達，最佳進場！" if signal=="BUY" \
-               else "⚠️ SELL — 高檔出場訊號觸發！"
-
-        # 軟提示 HTML
-        hints_html = ""
-        if sop["cond_vol"]:
-            hints_html += f"<div>💡 <b>量比 {vol_ratio}x</b>（≥ 1.5 加分提示）</div>"
-        if sop["wave_hint"]:
-            hints_html += f"<div>{sop['wave_hint']}</div>"
-
-        price_html = (
-            f"<b>🦁 激進買點：{buy_agg:.2f}</b> ｜ "
-            f"<b>🐢 保守買點：{buy_con:.2f}</b> ｜ "
-            f"<b>🛑 建議停損：{stop:.2f}</b>"
-        ) if signal=="BUY" else (
-            f"<b>⚡ 建議出場：{t['Close']:.2f} 附近分批出場</b> ｜ "
-            f"<b>🛑 停損：{stop:.2f}</b>"
-        )
-
-        st.markdown(f"""
-        <div class='{css_cls}'>
-            <div class='sop-title'>{action_txt}</div>
-            <div class='sop-sub'>
-                ✅ KD：{sop['kd_label']} &nbsp;｜&nbsp;
-                ✅ MACD：{sop['macd_label']} &nbsp;｜&nbsp;
-                ✅ SAR：{sop['sar_label']}
-            </div>
-            {'<div class="sop-hint">' + hints_html + '</div>' if hints_html else ''}
-            <div style='margin-top:14px; font-size:15px'>{price_html}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Telegram 推播按鈕
-        if st.button("📲 推播到 Telegram", type="primary"):
-            ok = push_telegram(tg_token, tg_chat, signal, name, code_clean,
-                               t["Close"], sop, buy_agg, buy_con, stop)
-            st.success("✅ 已推播！") if ok else st.warning("⚠️ 請先在側邊欄填入 Token / Chat ID")
-
     else:
-        # 未觸發 → 顯示條件進度
-        hard_count = sum([sop["cond_kd"], sop["cond_macd"], sop["cond_sar"]])
-        rows_html  = "".join([
-            f"<div class='cond-row'>"
-            f"<span class='{'pass' if ok else 'fail'}'>{'✅' if ok else '❌'} {label}</span>"
-            f"</div>"
-            for ok, label in [
-                (sop["cond_kd"],   f"KD：{sop['kd_label']}"),
-                (sop["cond_macd"], f"MACD：{sop['macd_label']}"),
-                (sop["cond_sar"],  f"SAR：{sop['sar_label']}"),
-            ]
-        ])
-        # 軟提示
-        soft_html = ""
-        if sop["cond_vol"]:
-            soft_html += f"<div class='cond-row'><span class='hint'>💡 量比 {vol_ratio}x ≥ 1.5（軟提示達標 ✔）</span></div>"
+        if c<m20: return "C-5" if k<20 else "C-3"
+        return "B-c" if k>80 else "B-a"
+
+
+_WHINTS={
+    "3-3":"🌊 3-3 主升急漲（波浪加分）",
+    "3-5":"🏔️ 3-5 噴出末段（波浪加分，注意高點）",
+    "3-1":"🌱 3-1 初升啟動（波浪提示）",
+    "4-c":"🪤 4-c 修正末端（底部波浪提示）",
+}
+
+
+def fib(df):
+    w=min(len(df),120); h=df["High"].iloc[-w:].max(); l=df["Low"].iloc[-w:].min(); d=h-l
+    return {"0.236":h-d*.236,"0.382":h-d*.382,"0.500":h-d*.5,"0.618":h-d*.618}
+
+
+def sop(df):
+    if df is None or len(df)<30: return {"signal":None,"hard_pass":False}
+    t=df.iloc[-1]; p=df.iloc[-2]
+    kx=(p["K"]<p["D"])and(t["K"]>t["D"]); kb=t["K"]>t["D"]
+    ck=kb or kx; kl="今日金叉✨" if kx else("多頭排列" if kb else "空方排列")
+    cm=t["MACD_HIST"]>0
+    ml=("今日翻紅🔴" if(p["MACD_HIST"]<=0 and t["MACD_HIST"]>0)
+        else("紅柱延伸" if cm else "綠柱整理"))
+    cs=float(t["Close"])>float(t["SAR"]); sl="多方支撐↑" if cs else "空方壓力↓"
+    hp=ck and cm and cs
+    vm=t["VOL_MA5"] if t["VOL_MA5"]>0 else 1
+    vr=round(float(t["Volume"])/float(vm),1); cv=vr>=1.5
+    wl=wave_lbl(df); cw=wl in("3-3","3-5","3-1","4-c")
+    sig=None
+    if hp: sig="SELL" if wl in("3-5","B-c","C-3") else "BUY"
+    return {"signal":sig,"hard_pass":hp,
+            "cond_kd":ck,"kd_lbl":kl,
+            "cond_macd":cm,"macd_lbl":ml,
+            "cond_sar":cs,"sar_lbl":sl,
+            "cond_vol":cv,"vol_ratio":vr,
+            "cond_wave":cw,"wave_lbl":wl,"wave_hint":_WHINTS.get(wl)}
+
+
+def push_tg(tok,cid,sig,name,code,price,s,ba,bc,st_):
+    if not tok or not cid or len(tok)<10: return False
+    soft=""
+    if s["cond_vol"]:  soft+=f"\n💡 量比{s['vol_ratio']}x（加分）"
+    if s["wave_hint"]: soft+=f"\n{s['wave_hint']}"
+    pl=(f"🦁{ba:.2f} ｜ 🐢{bc:.2f} ｜ 🛑{st_:.2f}"
+        if sig=="BUY" else f"⚡出場{price:.2f} ｜ 🛑{st_:.2f}")
+    msg=(f"{'🚀' if sig=='BUY' else '⚠️'} <b>AI Stock Bot SOP {'BUY' if sig=='BUY' else 'SELL'}</b>\n\n"
+         f"<b>{name}（{code}）</b> {price:.2f}\n"
+         f"✅KD：{s['kd_lbl']} ✅MACD：{s['macd_lbl']} ✅SAR：{s['sar_lbl']}"
+         f"{soft}\n{pl}\n<i>{datetime.now().strftime('%Y-%m-%d %H:%M')}</i>")
+    try:
+        r=requests.post(f"https://api.telegram.org/bot{tok}/sendMessage",
+                        json={"chat_id":cid,"text":msg,"parse_mode":"HTML"},timeout=8)
+        return r.status_code==200
+    except: return False
+
+
+def wchip(l):
+    c="wb" if l[0] in"34" else "wr" if l[0] in"CB" else "wn"
+    return f"<span class='wc {c}'>{l}</span>"
+
+
+def _v(row,key,fb=np.nan):
+    v=row.get(key,fb); return fb if pd.isna(v) else v
+
+
+# ═══════════════════════════════════════════
+# TAB 2 — 自選股管理
+# ═══════════════════════════════════════════
+with tab_watchlist:
+    st.subheader("⭐ 我的自選股")
+    st.caption("新增後永久保存在 `watchlist.json`，不刪除就一直存在。"
+               "cloud_bot.py 每天自動依此清單發送報告。")
+
+    # ── 訊息顯示 ──
+    if st.session_state.wl_msg:
+        fn = st.success if st.session_state.wl_msg_type=="ok" else st.error
+        fn(st.session_state.wl_msg)
+        st.session_state.wl_msg = ""; st.session_state.wl_msg_type = ""
+
+    # ── 新增區 ──
+    st.markdown("#### ➕ 新增股票")
+    ac1,ac2,ac3,ac4 = st.columns([1.2,1.5,2.8,0.9])
+    new_code = ac1.text_input("代號", placeholder="2330", key="nc",
+                               label_visibility="collapsed")
+    new_name = ac2.text_input("名稱（可空）", placeholder="名稱", key="nn",
+                               label_visibility="collapsed")
+    new_note = ac3.text_input("備註（可空）", placeholder="備註，如：長線佈局", key="no",
+                               label_visibility="collapsed")
+    add_btn  = ac4.button("➕ 新增", type="primary", use_container_width=True)
+
+    if add_btn and new_code:
+        nm = new_name.strip()
+        if not nm:
+            with st.spinner(f"自動查詢 {new_code} 名稱..."):
+                nm = lookup_name(new_code)
+        ok, msg = add_stock(new_code, nm, new_note)
+        st.session_state.wl_msg = msg
+        st.session_state.wl_msg_type = "ok" if ok else "err"
+        st.rerun()
+
+    # ── 批次新增 ──
+    with st.expander("📋 批次新增（每行一個代號，格式：代號 或 代號,名稱,備註）"):
+        batch = st.text_area("每行一筆", placeholder="2330\n2454,聯發科\n3661,世芯-KY,長線觀察",
+                              height=110, key="batch")
+        if st.button("批次新增", key="ba"):
+            lines = [l.strip() for l in batch.splitlines() if l.strip()]
+            msgs  = []
+            for ln in lines:
+                parts = [x.strip() for x in ln.split(",")]
+                c=parts[0]; n=parts[1] if len(parts)>1 else ""; nt=parts[2] if len(parts)>2 else ""
+                if not n: n=lookup_name(c)
+                ok,msg = add_stock(c,n,nt); msgs.append(msg)
+            if msgs:
+                st.success("\n".join(msgs))
+                st.rerun()
+
+    st.markdown("---")
+
+    # ── 清單表 ──
+    wl = get_all()
+    if not wl:
+        st.info("目前清單是空的，請新增股票。")
+    else:
+        st.markdown(f"📋 共 **{len(wl)}** 支股票")
+        # 表頭
+        h1,h2,h3,h4,h5 = st.columns([0.7,1.0,1.0,2.4,0.8])
+        h1.markdown("**代號**"); h2.markdown("**名稱**"); h3.markdown("**加入日期**")
+        h4.markdown("**備註**"); h5.markdown("**操作**")
+        st.markdown("<hr style='margin:4px 0'>", unsafe_allow_html=True)
+
+        for code, info in wl.items():
+            c1,c2,c3,c4,c5 = st.columns([0.7,1.0,1.0,2.4,0.8])
+            c1.markdown(f"**{code}**")
+            c2.write(info.get("name",""))
+            c3.caption(info.get("added",""))
+            note_val = c4.text_input("備註", value=info.get("note",""),
+                                      key=f"nt_{code}", label_visibility="collapsed")
+            if note_val != info.get("note",""):
+                update_note(code, note_val)
+            if c5.button("🗑️", key=f"d_{code}", help=f"刪除 {info.get('name',code)}"):
+                ok,msg = remove_stock(code)
+                st.session_state.wl_msg = msg
+                st.session_state.wl_msg_type = "ok" if ok else "err"
+                st.rerun()
+
+
+# ═══════════════════════════════════════════
+# TAB 1 — 個股分析
+# ═══════════════════════════════════════════
+with tab_analysis:
+    wl_now = get_all()
+    if not run_btn and wl_now:
+        st.info("📋 自選股：" +
+                "  ".join([f"**{v['name']}**({k})" for k,v in list(wl_now.items())[:8]]) +
+                ("  ..." if len(wl_now)>8 else "") +
+                "\n\n← 在左側輸入代號並點「開始分析」")
+
+    if run_btn:
+        code_in = stock_input.strip().replace(".TW","").replace(".TWO","")
+        with st.spinner(f"載入 {code_in}..."):
+            df_d,df_60,df_30,ticker,cc = fetch_stock(code_in)
+            name = wl_now.get(cc,{}).get("name") or lookup_name(cc)
+
+        if df_d is None or len(df_d)<10:
+            st.error("❌ 找不到資料，請確認代號。"); st.stop()
+
+        df_d  = add_ind(df_d)
+        df_60 = add_ind(df_60) if df_60 is not None and not df_60.empty else None
+        df_30 = add_ind(df_30) if df_30 is not None and not df_30.empty else None
+
+        t=df_d.iloc[-1]; p=df_d.iloc[-2]
+        s    = sop(df_d)
+        f    = fib(df_d)
+        atr  = _v(t,"ATR",t["Close"]*.02)
+        wd   = wave_lbl(df_d)
+        w60  = wave_lbl(df_60) if df_60 is not None else "N/A"
+        w30  = wave_lbl(df_30) if df_30 is not None else "N/A"
+        ma5  = _v(t,"MA5",f["0.236"])
+        ma20 = _v(t,"MA20",f["0.382"])
+        ba   = max(ma5,  f["0.236"])
+        bc   = max(ma20, f["0.382"])
+        stl  = max(t["Close"]-atr*2, f["0.618"])
+        vm   = t["VOL_MA5"] if t["VOL_MA5"]>0 else 1
+        vr   = round(t["Volume"]/vm,1)
+        diff = t["Close"]-p["Close"]; dp=diff/p["Close"]*100
+        pcls = "px-up" if diff>0 else "px-down" if diff<0 else "px-flat"
+        sg   = "+" if diff>0 else ""
+
+        # ── 標題 ──
+        st.markdown(f"## 📊 {name}（{cc}）")
+        hc1,hc2,hc3,hc4 = st.columns([2,1.5,1.5,2.5])
+        hc1.markdown(
+            f"<span class='{pcls}'>{t['Close']:.2f}</span>"
+            f"<span style='font-size:15px;color:#666'> {sg}{diff:.2f}（{sg}{dp:.2f}%）</span>",
+            unsafe_allow_html=True)
+        hc2.metric("成交量",f"{int(t['Volume']/1000)} 張",f"量比 {vr}x")
+        hc3.metric("ATR",f"{atr:.2f}")
+        hc4.markdown(f"波浪：{wchip(wd)}{wchip(w60)}{wchip(w30)}",unsafe_allow_html=True)
+
+        # 快速加入自選股
+        if cc not in wl_now:
+            if st.button("⭐ 加入自選股"):
+                ok,msg=add_stock(cc,name)
+                st.success(msg) if ok else st.warning(msg)
+
+        st.markdown("---")
+
+        # ── SOP 區塊 ──
+        sig = s["signal"]
+        if sig in ("BUY","SELL"):
+            css  = "sop-buy" if sig=="BUY" else "sop-sell"
+            act  = "🚀 BUY — SOP 三線全達，最佳進場！" if sig=="BUY" else "⚠️ SELL — 高檔出場訊號！"
+            hh   = ""
+            if s["cond_vol"]:  hh+=f"<div>💡 量比 {vr}x（≥1.5 加分）</div>"
+            if s["wave_hint"]: hh+=f"<div>{s['wave_hint']}</div>"
+            ph   = (f"🦁 激進：<b>{ba:.2f}</b> ｜ 🐢 保守：<b>{bc:.2f}</b> ｜ 🛑 停損：<b>{stl:.2f}</b>"
+                    if sig=="BUY" else
+                    f"⚡ 出場：<b>{t['Close']:.2f}</b> ｜ 🛑 停損：<b>{stl:.2f}</b>")
+            st.markdown(f"""
+            <div class='{css}'>
+                <div class='sop-title'>{act}</div>
+                <div class='sop-sub'>
+                    ✅ KD：{s['kd_lbl']} &nbsp;｜&nbsp;
+                    ✅ MACD：{s['macd_lbl']} &nbsp;｜&nbsp;
+                    ✅ SAR：{s['sar_lbl']}
+                </div>
+                {'<div class="sop-hint">'+hh+'</div>' if hh else ''}
+                <div style='margin-top:12px;font-size:15px'>{ph}</div>
+            </div>""", unsafe_allow_html=True)
+            if st.button("📲 推播到 Telegram", type="primary"):
+                ok=push_tg(tg_token,tg_chat,sig,name,cc,t["Close"],s,ba,bc,stl)
+                st.success("✅ 推播成功！") if ok else st.warning("⚠️ 請填入 Token / Chat ID")
         else:
-            soft_html += f"<div class='cond-row'><span style='color:#888'>💡 量比 {vol_ratio}x（未達 1.5）</span></div>"
-        if sop["wave_hint"]:
-            soft_html += f"<div class='cond-row'><span class='hint'>{sop['wave_hint']}（軟提示達標 ✔）</span></div>"
-        else:
-            soft_html += f"<div class='cond-row'><span style='color:#888'>🌊 波浪 {w_d}（非 3-3/3-5/3浪 提示範圍）</span></div>"
+            hn=sum([s["cond_kd"],s["cond_macd"],s["cond_sar"]])
+            rows="".join([
+                f"<div class='cr'><span class='{'ok' if ok else 'ng'}'>{'✅' if ok else '❌'} {lb}</span></div>"
+                for ok,lb in [(s["cond_kd"],f"KD：{s['kd_lbl']}"),
+                               (s["cond_macd"],f"MACD：{s['macd_lbl']}"),
+                               (s["cond_sar"], f"SAR：{s['sar_lbl']}")]
+            ])
+            svol=(f"<div class='cr'><span class='ht'>💡 量比 {vr}x（軟提示達標✔）</span></div>" if s["cond_vol"]
+                  else f"<div class='cr'><span style='color:#888'>💡 量比 {vr}x（未達1.5）</span></div>")
+            swav=(f"<div class='cr'><span class='ht'>{s['wave_hint']}（軟提示達標✔）</span></div>" if s["wave_hint"]
+                  else f"<div class='cr'><span style='color:#888'>🌊 波浪 {wd}（不在提示範圍）</span></div>")
+            st.markdown(f"""
+            <div class='watch-box'>
+                👀 <b>SOP 觀察中</b>（硬條件 {hn}/3，尚未觸發）
+                <div style='margin-top:8px'>{rows}</div>
+                <hr style='border:none;border-top:1px dashed #ccc;margin:8px 0'>
+                <b style='font-size:13px;color:#888'>💡 軟提示：</b>{svol}{swav}
+            </div>""", unsafe_allow_html=True)
 
-        st.markdown(f"""
-        <div class='watch-banner'>
-            👀 <b>SOP 觀察中</b>（硬條件 {hard_count}/3 達標，尚未觸發）
-            <div style='margin-top:10px'>{rows_html}</div>
-            <hr style='border:none;border-top:1px dashed #ccc;margin:10px 0'>
-            <b style='font-size:13px;color:#888'>軟提示（加分項）：</b>
-            {soft_html}
-        </div>
-        """, unsafe_allow_html=True)
+        # ── 波浪 + 均線圖 ──
+        st.markdown("---")
+        w1,w2,w3=st.columns(3)
+        w1.info(f"📅 日線\n\n### {wd}")
+        w2.warning(f"⏰ 60分K\n\n### {w60}")
+        w3.error(f"⚡ 30分K\n\n### {w30}")
+        cd=df_d[["Close","MA5","MA20","MA60"]].iloc[-60:].dropna()
+        if not cd.empty:
+            st.markdown("#### 📈 近 60 日均線")
+            st.line_chart(cd,color=["#000000","#e53935","#43a047","#1e88e5"])
+            st.caption("黑:收盤｜紅:5MA｜綠:20MA｜藍:60MA")
 
-    # ════════════════════════════════════════
-    # 波浪結構 + 均線圖
-    # ════════════════════════════════════════
-    st.markdown("---")
-    col_w1, col_w2, col_w3 = st.columns(3)
-    col_w1.info(f"📅 日線\n\n### {w_d}")
-    col_w2.warning(f"⏰ 60分K\n\n### {w_60}")
-    col_w3.error(f"⚡ 30分K\n\n### {w_30}")
+        # ── 費波那契 + 布林 ──
+        st.markdown("---")
+        fc,bc2=st.columns(2)
+        with fc:
+            st.markdown("#### 📐 費波那契")
+            for r,k in [("0.236","0.236"),("0.382","0.382"),("0.500","0.500"),("0.618","0.618")]:
+                lv=f[k]; tg="✅ 守住" if t["Close"]>lv else "⚠️ 跌破"
+                st.write(f"**{r}**：{lv:.2f} — {tg}")
+        with bc2:
+            st.markdown("#### 🎯 布林通道")
+            bb=float(np.clip(_v(t,"BB_PCT",.5),0,1))
+            bm="衝出上軌（賣訊）" if bb>1 else "跌破下軌（買訊）" if bb<0 else "區間震盪"
+            st.metric("位置",bm); st.progress(bb)
+            st.caption(f"{bb*100:.1f}%（0%=下軌，100%=上軌）")
 
-    # 均線圖（近 60 日）
-    chart_data = df_d[["Close","MA5","MA20","MA60"]].iloc[-60:].dropna()
-    if not chart_data.empty:
-        st.markdown("#### 📈 近 60 日股價 + 均線")
-        st.line_chart(chart_data, color=["#000000","#e53935","#43a047","#1e88e5"])
-        st.caption("黑:收盤 ｜ 紅:5MA ｜ 綠:20MA ｜ 藍:60MA")
+        # ── 目標價 ──
+        st.markdown("---"); st.markdown("#### 🎯 目標價")
+        for col,mult,lb in zip(st.columns(3),
+                                [1.05,1.10,1.20],
+                                ["短線+5%","波段+10%","長線+20%"]):
+            tp=t["Close"]*mult; dy=max(5,int((tp-t["Close"])/(atr*.4)*2.5))
+            col.metric(lb,f"{tp:.2f}",f"約{dy}天")
 
-    # ════════════════════════════════════════
-    # 費波那契 + 布林
-    # ════════════════════════════════════════
-    st.markdown("---")
-    fc, bc = st.columns(2)
-    with fc:
-        st.markdown("#### 📐 費波那契回檔")
-        price = t["Close"]
-        for ratio, key in [("0.236","0.236"),("0.382","0.382"),("0.500","0.500"),("0.618","0.618")]:
-            lvl = fib[key]
-            tag = "✅ 守住" if price > lvl else "⚠️ 跌破"
-            st.write(f"**{ratio}**：{lvl:.2f} — {tag}")
-
-    with bc:
-        st.markdown("#### 🎯 布林通道位置")
-        bb_pct = _v(t, "BB_PCT", 0.5)
-        bb_msg = "衝出上軌（賣訊）" if bb_pct > 1 else "跌破下軌（買訊）" if bb_pct < 0 else "區間震盪"
-        st.metric("布林位置", bb_msg)
-        st.progress(float(np.clip(bb_pct, 0, 1)))
-        st.caption(f"目前在通道 {bb_pct*100:.1f}% 位置（0%=下軌，100%=上軌）")
-
-    # ════════════════════════════════════════
-    # 目標價
-    # ════════════════════════════════════════
-    st.markdown("---")
-    st.markdown("#### 🎯 目標價預估")
-    t1, t2, t3 = st.columns(3)
-    reality = 2.5
-    for col, mult, label in [(t1,1.05,"短線 +5%"),(t2,1.10,"波段 +10%"),(t3,1.20,"長線 +20%")]:
-        tp    = t["Close"] * mult
-        dist  = tp - t["Close"]
-        days  = max(5, int(dist / (atr*0.4) * reality))
-        col.metric(label, f"{tp:.2f}", f"約 {days} 天")
-
-    st.markdown("---")
-    st.caption(f"資料更新：{datetime.now().strftime('%Y-%m-%d %H:%M')} ｜ AI Stock Bot V1.0")
+        st.caption(f"更新：{datetime.now().strftime('%Y-%m-%d %H:%M')} ｜ AI Stock Bot V1.1")
