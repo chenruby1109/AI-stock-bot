@@ -1,424 +1,341 @@
 """
-AI-stock-bot — cloud_bot.py  v1.1
-從 watchlist.json 讀取監控清單，不刪除永久存在。
-每日自動推播時間表 + SOP 三線即時訊號。
+AI-stock-bot — Telegram 雲端哨兵 V2.0
+每用戶個人化報告：波浪+多因子+目標價+美股連動+新聞+量能
 """
-
-import yfinance as yf
-import pandas as pd
-import numpy as np
-import requests
-import time
-import os
+import yfinance as yf, pandas as pd, numpy as np
+import requests, time, os
 from datetime import datetime, timedelta
-from watchlist import to_simple_dict
+import auth, watchlist as wl, targets as tgt
+from report_builder import build_full_report
 
-# ─────────────────────────────────────────
-# ⚙️  設定區
-# ─────────────────────────────────────────
-TG_TOKEN = os.environ.get("TG_TOKEN",   "你的_BOT_TOKEN")
-TG_CHAT  = os.environ.get("TG_CHAT_ID", "你的_CHAT_ID")
+TG_TOKEN  = os.environ.get("TG_TOKEN",   "你的_BOT_TOKEN")
+TG_CHAT   = os.environ.get("TG_CHAT_ID", "你的_CHAT_ID")
+SOP_COOLDOWN    = 4 * 3600
+SIGNAL_COOLDOWN = 1 * 3600
 
-SOP_COOLDOWN = 4 * 3600   # SOP 同一股 4 小時不重複
-SIG_COOLDOWN = 1 * 3600   # 一般訊號 1 小時不重複
-
-
-# ─────────────────────────────────────────
-# Telegram
-# ─────────────────────────────────────────
-def tg(msg):
+def tg_send(msg, chat_id=None):
+    cid = chat_id or TG_CHAT
+    if not cid: return
     try:
         requests.post(
             f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-            json={"chat_id": TG_CHAT, "text": msg,
-                  "parse_mode": "HTML", "disable_web_page_preview": True},
-            timeout=8
-        )
-    except Exception as e:
-        print(f"[TG] {e}")
+            json={"chat_id":cid,"text":msg,"parse_mode":"HTML",
+                  "disable_web_page_preview":True}, timeout=10)
+    except Exception as e: print(f"[TG] {e}")
 
-
-# ─────────────────────────────────────────
-# 資料 & 指標
-# ─────────────────────────────────────────
 def get_df(code, period="1y", interval="1d"):
-    for sfx in [".TW", ".TWO"]:
+    for sfx in [".TW",".TWO"]:
         try:
-            df = yf.Ticker(code + sfx).history(period=period, interval=interval)
-            if not df.empty:
-                return df
-        except:
-            pass
+            df=yf.Ticker(code+sfx).history(period=period,interval=interval)
+            if not df.empty: return df
+        except: pass
     return None
 
-
-def _sar(hi, lo, a=0.02, am=0.2):
-    n = len(hi); sar = np.zeros(n); tr = np.ones(n)
-    ep = np.zeros(n); af = np.full(n, a)
-    sar[0] = lo[0]; ep[0] = hi[0]
-    for i in range(1, n):
-        sar[i] = sar[i-1] + af[i-1] * (ep[i-1] - sar[i-1])
-        if tr[i-1] == 1:
-            if lo[i] < sar[i]:
-                tr[i] = -1; sar[i] = ep[i-1]; ep[i] = lo[i]; af[i] = a
+def _sar(high,low,af0=0.02,af_max=0.2):
+    n=len(high); sar=np.zeros(n); trend=np.ones(n)
+    ep=np.zeros(n); af=np.full(n,af0); sar[0]=low[0]; ep[0]=high[0]
+    for i in range(1,n):
+        sar[i]=sar[i-1]+af[i-1]*(ep[i-1]-sar[i-1])
+        if trend[i-1]==1:
+            if low[i]<sar[i]: trend[i]=-1;sar[i]=ep[i-1];ep[i]=low[i];af[i]=af0
             else:
-                tr[i] = 1
-                if hi[i] > ep[i-1]: ep[i] = hi[i]; af[i] = min(af[i-1]+a, am)
-                else: ep[i] = ep[i-1]; af[i] = af[i-1]
-                sar[i] = min(sar[i], lo[i-1])
-                if i > 1: sar[i] = min(sar[i], lo[i-2])
+                trend[i]=1
+                if high[i]>ep[i-1]: ep[i]=high[i];af[i]=min(af[i-1]+af0,af_max)
+                else: ep[i]=ep[i-1];af[i]=af[i-1]
+                sar[i]=min(sar[i],low[i-1])
+                if i>1: sar[i]=min(sar[i],low[i-2])
         else:
-            if hi[i] > sar[i]:
-                tr[i] = 1; sar[i] = ep[i-1]; ep[i] = hi[i]; af[i] = a
+            if high[i]>sar[i]: trend[i]=1;sar[i]=ep[i-1];ep[i]=high[i];af[i]=af0
             else:
-                tr[i] = -1
-                if lo[i] < ep[i-1]: ep[i] = lo[i]; af[i] = min(af[i-1]+a, am)
-                else: ep[i] = ep[i-1]; af[i] = af[i-1]
-                sar[i] = max(sar[i], lo[i-1])
-                if i > 1: sar[i] = max(sar[i], lo[i-2])
+                trend[i]=-1
+                if low[i]<ep[i-1]: ep[i]=low[i];af[i]=min(af[i-1]+af0,af_max)
+                else: ep[i]=ep[i-1];af[i]=af[i-1]
+                sar[i]=max(sar[i],high[i-1])
+                if i>1: sar[i]=max(sar[i],high[i-2])
     return sar
 
-
 def add_ind(df):
-    if df is None or df.empty:
-        return df
-    n = len(df)
-    df["SAR"] = _sar(df["High"].values, df["Low"].values) if n > 5 else np.nan
-    for p in [5, 10, 20, 60]:
-        df[f"MA{p}"] = df["Close"].rolling(p).mean() if n >= p else np.nan
-    h9 = df["High"].rolling(9).max(); l9 = df["Low"].rolling(9).min()
-    rsv = ((df["Close"] - l9) / (h9 - l9) * 100).fillna(50)
-    k, d = [50.0], [50.0]
-    for v in rsv:
-        k.append(k[-1]*2/3 + v/3); d.append(d[-1]*2/3 + k[-1]/3)
-    df["K"] = k[1:]; df["D"] = d[1:]
-    e12 = df["Close"].ewm(span=12, adjust=False).mean()
-    e26 = df["Close"].ewm(span=26, adjust=False).mean()
-    df["DIF"] = e12 - e26
-    df["MACD_SIG"] = df["DIF"].ewm(span=9, adjust=False).mean()
-    df["MACD_HIST"] = df["DIF"] - df["MACD_SIG"]
-    df["TR"] = np.maximum(df["High"]-df["Low"],
-                          np.abs(df["High"]-df["Close"].shift(1)))
-    df["ATR"] = df["TR"].rolling(14).mean()
-    df["VOL_MA5"] = df["Volume"].rolling(5).mean()
+    if df is None or df.empty: return df
+    n=len(df)
+    df["SAR"]=_sar(df["High"].values,df["Low"].values) if n>5 else np.nan
+    for p in [5,10,20,60]:
+        df[f"MA{p}"]=df["Close"].rolling(p).mean() if n>=p else np.nan
+    h9=df["High"].rolling(9).max(); l9=df["Low"].rolling(9).min()
+    rsv=((df["Close"]-l9)/(h9-l9)*100).fillna(50)
+    k,d=[50.0],[50.0]
+    for v in rsv: k.append(k[-1]*2/3+v/3); d.append(d[-1]*2/3+k[-1]/3)
+    df["K"]=k[1:]; df["D"]=d[1:]
+    e12=df["Close"].ewm(span=12,adjust=False).mean()
+    e26=df["Close"].ewm(span=26,adjust=False).mean()
+    df["DIF"]=e12-e26; df["MACD_SIG"]=df["DIF"].ewm(span=9,adjust=False).mean()
+    df["MACD_HIST"]=df["DIF"]-df["MACD_SIG"]
+    df["TR"]=np.maximum(df["High"]-df["Low"],np.abs(df["High"]-df["Close"].shift(1)))
+    df["ATR"]=df["TR"].rolling(14).mean()
+    df["VOL_MA5"]=df["Volume"].rolling(5).mean()
     return df
 
-
-def wave(df):
-    if df is None or len(df) < 15:
-        return "N/A"
-    c = df["Close"].iloc[-1]
-    m20 = df["MA20"].iloc[-1] if not pd.isna(df["MA20"].iloc[-1]) else c
-    m60_raw = df["MA60"].iloc[-1] if "MA60" in df.columns else np.nan
-    m60 = m60_raw if not pd.isna(m60_raw) else c
-    k = df["K"].iloc[-1]; pk = df["K"].iloc[-2]
-    h = df["MACD_HIST"].iloc[-1]; ph = df["MACD_HIST"].iloc[-2]
-    if c >= m60:
-        if c > m20:
-            if h > 0 and h > ph: return "3-5" if k > 80 else "3-3"
-            if h > 0: return "3-a"
+def wave_label(df):
+    if df is None or len(df)<15: return "N/A"
+    c=df["Close"].iloc[-1]
+    m20=df["MA20"].iloc[-1] if not pd.isna(df["MA20"].iloc[-1]) else c
+    m60=df["MA60"].iloc[-1] if "MA60" in df.columns and not pd.isna(df["MA60"].iloc[-1]) else c
+    k=df["K"].iloc[-1]; pk=df["K"].iloc[-2]
+    h=df["MACD_HIST"].iloc[-1]; ph=df["MACD_HIST"].iloc[-2]
+    if c>=m60:
+        if c>m20:
+            if h>0 and h>ph: return "3-5" if k>80 else "3-3"
+            if h>0: return "3-a"
             return "3-1"
         else:
-            if k < 20: return "4-c"
-            if k < pk: return "4-a"
+            if k<20: return "4-c"
+            if k<pk: return "4-a"
             return "4-b"
     else:
-        if c < m20: return "C-5" if k < 20 else "C-3"
-        return "B-c" if k > 80 else "B-a"
+        if c<m20: return "C-5" if k<20 else "C-3"
+        return "B-c" if k>80 else "B-a"
 
-
-_WHINTS = {
-    "3-3": "🌊 3-3 主升急漲（波浪加分）",
-    "3-5": "🏔️ 3-5 噴出末段（波浪加分，注意高點）",
-    "3-1": "🌱 3-1 初升啟動",
-    "4-c": "🪤 4-c 修正末端",
-}
-
-
-# ─────────────────────────────────────────
-# ★ SOP 判斷（三線硬觸發）
-# ─────────────────────────────────────────
 def sop_check(df):
-    if df is None or len(df) < 30:
-        return {"signal": None, "hard_pass": False}
-    t = df.iloc[-1]; p = df.iloc[-2]
-    kx = (p["K"] < p["D"]) and (t["K"] > t["D"])
-    kb = t["K"] > t["D"]; ck = kb or kx
-    kl = "今日金叉✨" if kx else ("多頭排列" if kb else "空方排列")
-    cm = t["MACD_HIST"] > 0
-    ml = ("今日翻紅🔴" if (p["MACD_HIST"] <= 0 and t["MACD_HIST"] > 0)
-          else ("紅柱延伸" if cm else "綠柱整理"))
-    cs = float(t["Close"]) > float(t["SAR"])
-    sl = "多方支撐↑" if cs else "空方壓力↓"
-    hp = ck and cm and cs
-    vm = t["VOL_MA5"] if t["VOL_MA5"] > 0 else 1
-    vr = round(float(t["Volume"]) / float(vm), 1)
-    cv = vr >= 1.5
-    wl = wave(df); cw = wl in ("3-3", "3-5", "3-1", "4-c")
-    sig = None
-    if hp:
-        sig = "SELL" if wl in ("3-5", "B-c", "C-3") else "BUY"
-    return {"signal": sig, "hard_pass": hp,
-            "cond_kd": ck, "kd_lbl": kl,
-            "cond_macd": cm, "macd_lbl": ml,
-            "cond_sar": cs, "sar_lbl": sl,
-            "cond_vol": cv, "vol_ratio": vr,
-            "cond_wave": cw, "wave_lbl": wl,
-            "wave_hint": _WHINTS.get(wl)}
+    empty={"signal":None,"hard_pass":False,"kd_lbl":"N/A","macd_lbl":"N/A",
+           "sar_lbl":"N/A","cond_kd":False,"cond_macd":False,"cond_sar":False,
+           "vol_ratio":0,"cond_vol":False,"wave":"N/A","wave_hint":None}
+    if df is None or len(df)<30: return empty
+    t=df.iloc[-1]; p=df.iloc[-2]
+    kd_cross=(p["K"]<p["D"]) and (t["K"]>t["D"])
+    cond_kd=t["K"]>t["D"] or kd_cross
+    kd_lbl="今日金叉✨" if kd_cross else ("多頭排列" if cond_kd else "空方排列")
+    cond_macd=t["MACD_HIST"]>0
+    macd_lbl="今日翻紅🔴" if (p["MACD_HIST"]<=0 and t["MACD_HIST"]>0) else \
+             ("紅柱延伸" if cond_macd else "綠柱整理")
+    cond_sar=float(t["Close"])>float(t["SAR"])
+    sar_lbl="多方支撐↑" if cond_sar else "空方壓力↓"
+    hard_pass=cond_kd and cond_macd and cond_sar
+    vma=t["VOL_MA5"] if t["VOL_MA5"]>0 else 1
+    vol_ratio=round(float(t["Volume"])/float(vma),1)
+    wave=wave_label(df)
+    wave_hint={"3-3":"🌊 3-3主升急漲","3-5":"🏔️ 3-5噴出末段",
+               "3-1":"🌱 3-1初升","4-c":"🪤 4-c修正末端"}.get(wave)
+    signal=None
+    if hard_pass: signal="SELL" if wave in ("3-5","B-c","C-3") else "BUY"
+    return {"signal":signal,"hard_pass":hard_pass,
+            "cond_kd":cond_kd,"kd_lbl":kd_lbl,
+            "cond_macd":cond_macd,"macd_lbl":macd_lbl,
+            "cond_sar":cond_sar,"sar_lbl":sar_lbl,
+            "cond_vol":vol_ratio>=1.5,"vol_ratio":vol_ratio,
+            "wave":wave,"wave_hint":wave_hint}
 
-
-def sop_msg(sig, code, name, df, s):
-    t = df.iloc[-1]; p = df.iloc[-2]
-    pct = (t["Close"] - p["Close"]) / p["Close"] * 100
-    icon = "🔺" if pct > 0 else "💚" if pct < 0 else "➖"
-    atr = float(t["ATR"]) if not pd.isna(t["ATR"]) else float(t["Close"]) * .02
-    ma5  = float(t["MA5"])  if not pd.isna(t.get("MA5",  np.nan)) else float(t["Close"])
-    ma20 = float(t["MA20"]) if not pd.isna(t.get("MA20", np.nan)) else float(t["Close"])
-    hi = df["High"].iloc[-120:].max(); lo = df["Low"].iloc[-120:].min(); d = hi - lo
-    ba = max(ma5,  hi - d * .236)
-    bc = max(ma20, hi - d * .382)
-    st_ = max(float(t["Close"]) - atr * 2, hi - d * .618)
-    soft = ""
-    if s["cond_vol"]:  soft += f"\n💡 量比 <b>{s['vol_ratio']}x</b>（≥1.5 加分）"
-    if s["wave_hint"]: soft += f"\n{s['wave_hint']}"
-    pl = (f"🦁 激進：<b>{ba:.2f}</b>  🐢 保守：<b>{bc:.2f}</b>  🛑 停損：<b>{st_:.2f}</b>"
-          if sig == "BUY" else
-          f"⚡ 出場：<b>{t['Close']:.2f}</b>  🛑 停損：<b>{st_:.2f}</b>")
-    return (
-        f"{'🚀' if sig=='BUY' else '⚠️'} <b>AI Stock Bot — SOP {sig}</b> {'🚀' if sig=='BUY' else '⚠️'}\n\n"
-        f"<b>{name}（{code}）</b> {icon} {t['Close']:.2f}（{pct:+.2f}%）\n"
-        f"📊 量比：{s['vol_ratio']}x ｜ 🌊 {s['wave_lbl']}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"✅ KD：{s['kd_lbl']}\n"
-        f"✅ MACD：{s['macd_lbl']}\n"
-        f"✅ SAR：{s['sar_lbl']}"
-        f"{soft}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"{pl}\n"
-        f"<i>⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}</i>"
-    )
-
-
-# ─────────────────────────────────────────
-# 一般訊號
-# ─────────────────────────────────────────
-def basic_sigs(df):
-    if df is None or len(df) < 10:
-        return []
-    t = df.iloc[-1]; p = df.iloc[-2]; sigs = []
-    if t["Volume"] > t["VOL_MA5"] * 1.5 and t["Close"] > p["Close"] * 1.02:
+def basic_signals(df):
+    if df is None or len(df)<10: return []
+    t=df.iloc[-1]; p=df.iloc[-2]; sigs=[]
+    if t["Volume"]>t["VOL_MA5"]*1.5 and t["Close"]>p["Close"]*1.02:
         sigs.append("🚀 <b>出量突破</b>")
-    if (p["K"] < p["D"]) and (t["K"] > t["D"]) and t["K"] < 80:
-        sigs.append("✅ <b>KD 金叉</b>")
-    if p["MACD_HIST"] <= 0 and t["MACD_HIST"] > 0:
-        sigs.append("🔴 <b>MACD 翻紅</b>")
-    if t["K"] < 40 and t["K"] > p["K"] and t["K"] > t["D"]:
-        sigs.append("💧 <b>底部咕嚕咕嚕</b>")
-    streak = 0
-    col = ((df["Close"] >= df["Open"]) | (df["Close"] > df["Close"].shift(1))).iloc[-10:]
-    for x in reversed(col.values):
-        if x: streak += 1
+    if p["K"]<p["D"] and t["K"]>t["D"] and t["K"]<80:
+        sigs.append("✅ <b>KD今日金叉</b>")
+    if p["MACD_HIST"]<=0 and t["MACD_HIST"]>0:
+        sigs.append("🔴 <b>MACD今日翻紅</b>")
+    if t["K"]<40 and t["K"]>p["K"] and t["K"]>t["D"]:
+        sigs.append("💧 <b>底部咕嚕</b>")
+    recent=df.iloc[-10:]
+    streak=0
+    for x in reversed(((recent["Close"]>=recent["Open"])|(recent["Close"]>recent["Close"].shift(1))).values):
+        if x: streak+=1
         else: break
-    if 3 <= streak <= 10:
-        sigs.append(f"🛡️ <b>連買 {streak} 天</b>")
+    if 3<=streak<=10: sigs.append(f"🛡️ <b>主力連買{streak}天</b>")
     return sigs
 
+def build_sop_msg(signal,code,name,df,sop):
+    t=df.iloc[-1]; p=df.iloc[-2]
+    pct=(t["Close"]-p["Close"])/p["Close"]*100
+    icon="🔺" if pct>0 else "💚" if pct<0 else "➖"
+    atr=float(t["ATR"]) if not pd.isna(t["ATR"]) else float(t["Close"])*0.02
+    hi=df["High"].iloc[-120:].max(); lo=df["Low"].iloc[-120:].min(); diff=hi-lo
+    ma5=float(t.get("MA5",t["Close"])); ma20=float(t.get("MA20",t["Close"]))
+    buy_agg=max(ma5,hi-diff*0.236); buy_con=max(ma20,hi-diff*0.236)
+    stop=max(float(t["Close"])-atr*2,hi-diff*0.618)
+    e="🚀" if signal=="BUY" else "⚠️"
+    a="BUY — SOP三線觸發！" if signal=="BUY" else "SELL — 高檔出場！"
+    pl=(f"🦁 激進:<b>{buy_agg:.2f}</b> 🐢 保守:<b>{buy_con:.2f}</b> 🛑 停損:<b>{stop:.2f}</b>"
+        if signal=="BUY" else f"⚡ 出場:<b>{t['Close']:.2f}</b> 🛑 停損:<b>{stop:.2f}</b>")
+    soft=("" if not sop["cond_vol"] else f"\n💡 量比{sop['vol_ratio']}x≥1.5")+\
+         ("" if not sop["wave_hint"] else f"\n{sop['wave_hint']}")
+    return (f"{e} <b>AI Stock Bot SOP</b> {e}\n\n"
+            f"<b>{name}（{code}）</b> {icon}{t['Close']:.2f}（{pct:+.2f}%）\n"
+            f"━━━━━━━━━━━━━━━━━━\n<b>{a}</b>\n"
+            f"✅ KD:{sop['kd_lbl']}\n✅ MACD:{sop['macd_lbl']}\n✅ SAR:{sop['sar_lbl']}"
+            f"{soft}\n━━━━━━━━━━━━━━━━━━\n{pl}\n"
+            f"<i>{datetime.now().strftime('%Y-%m-%d %H:%M')}</i>")
 
-# ─────────────────────────────────────────
-# 定時報告
-# ─────────────────────────────────────────
-def _rows(watch, mode, label=""):
-    lines = []
-    for code, name in watch.items():
-        try:
-            df = get_df(code); df = add_ind(df)
-            if df is None: continue
-            t = df.iloc[-1]; p = df.iloc[-2]
-            pct = (t["Close"] - p["Close"]) / p["Close"] * 100
-            icon = "🔺" if pct > 0 else "💚" if pct < 0 else "➖"
-            vm = t["VOL_MA5"] if t["VOL_MA5"] > 0 else 1
-            vr = round(float(t["Volume"]) / float(vm), 1)
-            row = f"<b>{name}（{code}）</b> {icon} {t['Close']:.2f}（{pct:+.2f}%）\n"
+# ── 定時報告 ──
+def report_open():
+    watch=wl.to_dict()
+    if not watch: tg_send("🌅 <b>09:30開盤掃描</b>\n⚠️ 觀察名單為空"); return
+    lines=["🌅 <b>09:30 開盤掃描</b>\n"]
+    for code,name in watch.items():
+        df=get_df(code); df=add_ind(df)
+        if df is None: continue
+        t=df.iloc[-1]; p=df.iloc[-2]
+        pct=(t["Close"]-p["Close"])/p["Close"]*100; icon="🔺" if pct>0 else "💚" if pct<0 else "➖"
+        vr=round(t["Volume"]/t["VOL_MA5"],1) if t["VOL_MA5"]>0 else 0
+        sop=sop_check(df); sigs=basic_signals(df)
+        sop_t=" ⚡<b>三線達！</b>" if sop["hard_pass"] else ""
+        lines.append(f"<b>{name}({code})</b> {icon}{t['Close']:.2f}({pct:+.2f}%) 量比{vr}x{sop_t}\n"
+                     +(f"  {'｜'.join(sigs)}\n" if sigs else "  觀察中\n"))
+    tg_send("\n".join(lines))
 
-            if mode == "brief":
-                s  = sop_check(df)
-                hn = sum([s["cond_kd"], s["cond_macd"], s["cond_sar"]])
-                tag = ""
-                if s["signal"] == "BUY":   tag = " 🚀<b>SOP BUY</b>"
-                elif s["signal"] == "SELL": tag = " ⚠️<b>SOP SELL</b>"
-                else:                       tag = f" SOP {hn}/3"
-                soft = ""
-                if s["cond_vol"]:  soft += " 💡量比"
-                if s["wave_hint"]: soft += f" 🌊{s['wave_lbl']}"
-                row += f"  {tag}{soft} ｜ 量比：{vr}x\n"
+def report_mid(label):
+    watch=wl.to_dict()
+    if not watch: tg_send(f"🔔 <b>{label}盤中戰略</b>\n⚠️ 觀察名單為空"); return
+    lines=[f"🔔 <b>{label} 盤中戰略</b>\n"]
+    for code,name in watch.items():
+        df=get_df(code); df=add_ind(df)
+        if df is None: continue
+        t=df.iloc[-1]; p=df.iloc[-2]
+        pct=(t["Close"]-p["Close"])/p["Close"]*100; icon="🔺" if pct>0 else "💚" if pct<0 else "➖"
+        sop=sop_check(df); sigs=basic_signals(df)
+        hn=sum([sop["cond_kd"],sop["cond_macd"],sop["cond_sar"]])
+        sl=("🚀 <b>SOP BUY！</b>" if sop["signal"]=="BUY"
+            else "⚠️ <b>SOP SELL！</b>" if sop["signal"]=="SELL"
+            else f"👀 觀察中（{hn}/3）")
+        hints=("" if not sop["cond_vol"] else f" 💡量比{sop['vol_ratio']}x")+\
+              ("" if not sop["wave_hint"] else f" 🌊{sop['wave']}")
+        lines.append(f"<b>{name}({code})</b> {icon}{t['Close']:.2f}({pct:+.2f}%)\n  {sl}{hints}\n"
+                     +(f"  {'｜'.join(sigs)}\n" if sigs else ""))
+    tg_send("\n".join(lines))
 
-            elif mode == "open":
-                s    = sop_check(df)
-                sigs = basic_sigs(df)
-                hn   = sum([s["cond_kd"], s["cond_macd"], s["cond_sar"]])
-                row += f"  📊 量比：{vr}x ｜ 波浪：{s['wave_lbl']} ｜ SOP：{hn}/3"
-                if s["signal"]: row += f" ⚡<b>{s['signal']}</b>"
-                row += "\n"
-                if sigs: row += "  " + "｜".join(sigs) + "\n"
+def report_close():
+    watch=wl.to_dict()
+    if not watch: tg_send("🌇 <b>13:36收盤確認</b>\n⚠️ 觀察名單為空"); return
+    lines=["🌇 <b>13:36 收盤確認</b>\n"]
+    for code,name in watch.items():
+        df=get_df(code); df=add_ind(df)
+        if df is None: continue
+        t=df.iloc[-1]; p=df.iloc[-2]
+        pct=(t["Close"]-p["Close"])/p["Close"]*100; icon="🔺" if pct>0 else "💚" if pct<0 else "➖"
+        atr=float(t["ATR"]) if not pd.isna(t["ATR"]) else float(t["Close"])*0.02
+        ma20=float(t.get("MA20",t["Close"]))
+        lines.append(f"<b>{name}({code})</b> <b>{icon}{t['Close']:.2f}({pct:+.2f}%)</b>\n"
+                     f"  🎯 低接參考:{ma20:.2f} ｜ 🛑 停損:{float(t['Close'])-atr*2:.2f}\n")
+    tg_send("\n".join(lines))
 
-            elif mode == "mid":
-                s    = sop_check(df)
-                sigs = basic_sigs(df)
-                hn   = sum([s["cond_kd"], s["cond_macd"], s["cond_sar"]])
-                atr  = float(t["ATR"]) if not pd.isna(t["ATR"]) else float(t["Close"]) * .02
-                ma5  = float(t["MA5"])  if not pd.isna(t.get("MA5",  np.nan)) else float(t["Close"])
-                ma20 = float(t["MA20"]) if not pd.isna(t.get("MA20", np.nan)) else float(t["Close"])
-                hi = df["High"].iloc[-120:].max(); lo = df["Low"].iloc[-120:].min(); d = hi - lo
-                ba = max(ma5, hi-d*.236); bc = max(ma20, hi-d*.382)
-                row += f"  🛒 激進{ba:.2f}｜保守{bc:.2f}｜量比{vr}x ｜ SOP：{hn}/3"
-                if s["signal"]: row += f" ⚡<b>{s['signal']}</b>"
-                if s["cond_vol"]:  row += " 💡量比"
-                if s["wave_hint"]: row += f" 🌊{s['wave_lbl']}"
-                row += "\n"
-                if sigs: row += "  " + "｜".join(sigs) + "\n"
+def report_evening_personal():
+    """18:40 個人化深度報告 — 發送給每位有 Telegram ID 的用戶"""
+    all_users=auth.get_all_users()
+    for uname,uinfo in all_users.items():
+        chat_id=uinfo.get("telegram_chat_id","")
+        if not chat_id: continue
+        user_codes=uinfo.get("watchlist",[])
+        if not user_codes: continue
 
-            elif mode == "close":
-                atr  = float(t["ATR"]) if not pd.isna(t["ATR"]) else float(t["Close"]) * .02
-                ma20 = float(t["MA20"]) if not pd.isna(t.get("MA20", np.nan)) else float(t["Close"])
-                stop = float(t["Close"]) - atr * 2
-                row += f"  🎯 明日低接：{ma20:.2f} ｜ 🛑 停損：{stop:.2f}\n"
+        user_tgts=tgt.get_user_all_targets(uname)
+        tg_send(f"🌙 <b>{uinfo.get('display_name',uname)} 的盤後個人報告</b>\n"
+                f"共追蹤 {len(user_codes)} 支股票，以下逐一分析 👇", chat_id=chat_id)
 
-            elif mode == "evening":
-                v_up   = t["Volume"] > t["VOL_MA5"] and t["Close"] > p["Close"]
-                v_down = t["Volume"] > t["VOL_MA5"] and t["Close"] < p["Close"]
-                chip   = "量增價漲（主力進場）" if v_up else "出貨跡象⚠️" if v_down else "量縮整理"
-                s      = sop_check(df)
-                hn     = sum([s["cond_kd"], s["cond_macd"], s["cond_sar"]])
-                score  = hn + int(s["cond_vol"]) + int(s["cond_wave"])
-                advice = "🔥 積極操作" if score >= 4 else "✅ 拉回留意" if score >= 2 else "⚠️ 觀望"
-                row += f"  🛡️ {chip} ｜ 🌊{wave(df)} ｜ SOP：{hn}/3\n"
-                row += f"  💡 AI：{advice}\n"
+        for code in user_codes:
+            try:
+                name=wl.to_dict().get(code,code)
+                target_price=user_tgts.get(code,{}).get("target_price") if code in user_tgts else None
+                msg=build_full_report(code,name,target_price,uinfo.get("display_name",uname))
+                tg_send(msg, chat_id=chat_id)
+                time.sleep(1)   # 避免 TG rate limit
+            except Exception as e:
+                tg_send(f"❌ {code} 報告生成失敗：{e}", chat_id=chat_id)
 
-            lines.append(row + "─────────────────")
-        except:
-            pass
-    return "\n".join(lines)
+        tg_send(f"✅ 今日報告完畢！祝投資順利 🎯\n"
+                f"<i>{datetime.now().strftime('%Y-%m-%d %H:%M')}</i>",
+                chat_id=chat_id)
 
-
+# ── 主迴圈 ──
 SCHEDULE = {
-    "08:30": "brief",    # 每日晨報（自選股總覽）
-    "09:30": "open",     # 開盤掃描
-    "10:20": "mid",      # 盤中戰略
-    "12:00": "mid",      # 盤中戰略
-    "13:36": "close",    # 收盤確認
-    "18:40": "evening",  # 盤後AI總結
+    "09:30":"open","10:20":"mid","12:00":"mid",
+    "13:36":"close","18:40":"evening"
 }
 
-HEADERS = {
-    "brief":   "☀️ <b>每日晨報 — 自選股總覽</b>",
-    "open":    "🌅 <b>09:30 開盤掃描</b>",
-    "mid":     "🔔 <b>{label} 盤中戰略</b>",
-    "close":   "🌇 <b>13:36 收盤確認</b>",
-    "evening": "🌙 <b>18:40 盤後AI總結</b>",
-}
-
-
-# ─────────────────────────────────────────
-# 主迴圈
-# ─────────────────────────────────────────
 def run():
-    print("🤖 AI Stock Bot V1.1 啟動...")
-    watch = to_simple_dict()
-    tg(
-        "🤖 <b>AI Stock Bot V1.1 上線！</b>\n\n"
-        "✅ 自選股從 watchlist.json 讀取（每 10 分鐘同步）\n"
-        "📅 時間表：08:30 晨報 / 09:30 / 10:20 / 12:00 / 13:36 / 18:40\n"
-        "SOP：KD + MACD + SAR 三線全達觸發\n\n"
-        f"監控 <b>{len(watch)}</b> 支：" +
-        " / ".join(list(watch.values())[:6]) +
-        (" ..." if len(watch) > 6 else "")
+    print("🤖 AI Stock Bot V2.0 啟動（個人化報告版）...")
+    tg_send(
+        "🤖 <b>AI Stock Bot V2.0 上線！</b>\n\n"
+        "✨ 新功能：<b>個人化深度報告</b>\n"
+        "每日 18:40 依各用戶觀察名單+目標價\n"
+        "發送波浪理論、多因子分析、美股連動、最新消息、量能偵測\n\n"
+        "登入 app.py 設定你的 Telegram Chat ID 即可接收 📲"
     )
 
-    sent    = {t: False for t in SCHEDULE}
-    sop_h   = {}
-    sig_h   = {}
-    last_rl = datetime.utcnow()
+    sent:dict={t:False for t in SCHEDULE}
+    sop_h:dict={}; sig_h:dict={}
 
     while True:
-        now   = datetime.utcnow() + timedelta(hours=8)
-        hm    = now.strftime("%H:%M")
-        wday  = now.weekday()
-
-        is_work    = wday <= 4
-        is_active  = is_work and  8 <= now.hour <= 19
-        is_trading = is_work and (
-            now.hour == 9 or
-            (9 < now.hour < 13) or
-            (now.hour == 13 and now.minute <= 30)
-        )
+        now=datetime.utcnow()+timedelta(hours=8)
+        hm=now.strftime("%H:%M"); wday=now.weekday()
+        is_work=wday<=4
+        is_active=is_work and 8<=now.hour<=19
+        is_trade=is_work and (now.hour==9 or (9<now.hour<13) or (now.hour==13 and now.minute<=30))
 
         if not is_active:
-            print(f"\r💤 {hm}", end="")
-            if hm == "00:00":
-                for k in sent: sent[k] = False
-            time.sleep(60)
-            continue
+            print(f"\r💤 {hm} 休市",end="")
+            if hm=="00:00":
+                for k in sent: sent[k]=False
+            time.sleep(60); continue
 
-        # ── 每 10 分鐘重新載入自選股 ──
-        if (datetime.utcnow() - last_rl).seconds >= 600:
-            watch   = to_simple_dict()
-            last_rl = datetime.utcnow()
-            print(f"\n🔄 {hm} 重載自選股，共 {len(watch)} 支")
+        users_count=len(auth.get_all_users())
+        wl_count=len(wl.to_dict())
+        print(f"\r🔄 {hm} {'交易' if is_trade else '盤後'} | 用戶:{users_count} 名單:{wl_count}支",end="")
 
-        print(f"\r{'📈' if is_trading else '🕐'} {hm} "
-              f"{'交易中' if is_trading else '盤後'} [{len(watch)}支]", end="")
-
-        # ── 定時報告 ──
+        # 定時報告
         if hm in SCHEDULE and not sent[hm]:
-            rt  = SCHEDULE[hm]
-            hdr = HEADERS[rt].replace("{label}", hm)
-            body = _rows(watch, rt, hm)
-            tg(f"{hdr}（共 {len(watch)} 支）\n\n{body}\n\n"
-               f"<i>⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}</i>")
-            sent[hm] = True
-            print(f"\n⏰ {hm} 推播 {rt}")
+            rt=SCHEDULE[hm]; print(f"\n⏰ {hm} {rt}")
+            if   rt=="open":    report_open()
+            elif rt=="mid":     report_mid(hm)
+            elif rt=="close":   report_close()
+            elif rt=="evening": report_evening_personal()
+            sent[hm]=True
 
-        if hm == "08:00":
-            for k in sent: sent[k] = False
+        if hm=="08:00":
+            for k in sent: sent[k]=False
 
-        # ── 即時 SOP 掃描（交易時段）──
-        if is_trading:
-            for code, name in watch.items():
+        # 即時 SOP 掃描
+        if is_trade:
+            watch=wl.to_dict()
+            for code,name in watch.items():
                 try:
-                    # SOP 冷卻
-                    ls = sop_h.get(code)
-                    sop_ok = not ls or (now - ls).seconds >= SOP_COOLDOWN
+                    last_sop=sop_h.get(code)
+                    sop_ok=not last_sop or (now-last_sop).seconds>=SOP_COOLDOWN
                     if sop_ok:
-                        df = get_df(code); df = add_ind(df)
+                        df=get_df(code);
                         if df is None: continue
-                        s = sop_check(df)
-                        if s["signal"] in ("BUY", "SELL"):
-                            tg(sop_msg(s["signal"], code, name, df, s))
-                            sop_h[code] = now
-                            print(f"\n🚨 {hm} SOP {s['signal']} → {name}({code})")
+                        df=add_ind(df); sop=sop_check(df)
+                        if sop["signal"] in ("BUY","SELL"):
+                            base_msg=build_sop_msg(sop["signal"],code,name,df,sop)
+                            # 廣播給所有有設定 TG ID 且名單中有此股的用戶
+                            all_users=auth.get_all_users()
+                            for uname,uinfo in all_users.items():
+                                cid=uinfo.get("telegram_chat_id","")
+                                if cid and code in uinfo.get("watchlist",[]):
+                                    tg_send(base_msg, chat_id=cid)
+                            sop_h[code]=now
+                            print(f"\n🚨 {hm} SOP {sop['signal']} → {name}({code})")
                             continue
 
-                    # 一般訊號冷卻
-                    lg = sig_h.get(code)
-                    if lg and (now - lg).seconds < SIG_COOLDOWN:
-                        continue
-                    df = get_df(code); df = add_ind(df)
+                    last_sig=sig_h.get(code)
+                    sig_ok=not last_sig or (now-last_sig).seconds>=SIGNAL_COOLDOWN
+                    if not sig_ok: continue
+                    df=get_df(code);
                     if df is None: continue
-                    sigs = basic_sigs(df)
+                    df=add_ind(df); sigs=basic_signals(df)
                     if sigs:
-                        t2 = df.iloc[-1]; p2 = df.iloc[-2]
-                        pct = (t2["Close"] - p2["Close"]) / p2["Close"] * 100
-                        icon = "🔺" if pct > 0 else "💚"
-                        tg(f"🚨 <b>盤中訊號</b>\n\n"
-                           f"<b>{name}（{code}）</b> {icon}{t2['Close']:.2f}（{pct:+.2f}%）\n"
-                           + "\n".join(sigs) +
-                           f"\n<i>⏰{hm}</i>")
-                        sig_h[code] = now
-                except:
-                    pass
+                        t=df.iloc[-1]; p=df.iloc[-2]
+                        pct=(t["Close"]-p["Close"])/p["Close"]*100
+                        icon="🔺" if pct>0 else "💚" if pct<0 else "➖"
+                        msg=(f"🚨 <b>盤中訊號快報</b>\n<b>{name}（{code}）</b>"
+                             f" {icon}{t['Close']:.2f}（{pct:+.2f}%）\n"
+                             +"\n".join(sigs)+f"\n<i>{hm}</i>")
+                        all_users=auth.get_all_users()
+                        for uname,uinfo in all_users.items():
+                            cid=uinfo.get("telegram_chat_id","")
+                            if cid and code in uinfo.get("watchlist",[]):
+                                tg_send(msg, chat_id=cid)
+                        sig_h[code]=now
+                except: pass
 
         time.sleep(30)
 
-
-if __name__ == "__main__":
+if __name__=="__main__":
     run()
