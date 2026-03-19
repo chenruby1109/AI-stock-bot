@@ -418,9 +418,9 @@ with tab_wl:
     if not my_codes:
         st.info("尚無觀察股票，請在上方新增 ☝️")
     else:
-        wl_data=db._read_file("watchlist.json")
+        wl_map=db.get_global_watchlist()   # {code: name}
         for code in my_codes:
-            nm=wl_data.get(code, code) if isinstance(wl_data.get(code), str) else code
+            nm=wl_map.get(code, code)
             my_tgt_e=db.get_user_target(user["username"],code)
             tgt_txt=f"🎯 目標：{my_tgt_e['target_price']:.2f}" if my_tgt_e else "尚無目標價"
             cl1,cl2,cl3,cl4=st.columns([1,2,2,1])
