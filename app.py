@@ -9,6 +9,7 @@ import numpy as np
 import requests
 from datetime import datetime, timedelta
 import gist_db as db   # ← 統一使用 Gist 資料庫
+import ai_report
 
 st.set_page_config(page_title="AI Stock Bot", page_icon="🤖", layout="wide")
 st.markdown("""
@@ -394,6 +395,57 @@ with tab_ana:
             tp=t["Close"]*mult; days=max(5,int((tp-t["Close"])/max(atr*0.4,0.01)*2.5))
             col.metric(lb,f"{tp:.2f}",f"約{days}天")
         st.caption(f"更新：{datetime.now().strftime('%Y-%m-%d %H:%M')} | AI Stock Bot V2.0")
+
+        # ════════════════════════════════════════
+        # AI 深度分析報告書
+        # ════════════════════════════════════════
+        st.markdown("---")
+        st.markdown("## 🤖 AI 深度個股分析報告書")
+        st.caption("整合技術面、基本面、波浪理論、美股連動、最新新聞，由 Claude AI 生成")
+
+        if st.button("📋 生成完整分析報告書", type="primary", use_container_width=True, key="gen_report"):
+            my_tgt_price = None
+            tgt_entry = db.get_user_target(user["username"], cc)
+            if tgt_entry: my_tgt_price = tgt_entry["target_price"]
+
+            with st.spinner("🤖 AI 正在分析所有數據，生成完整報告書...（約 30-60 秒）"):
+                result = ai_report.generate_full_report(cc, nm, my_tgt_price)
+
+            if result.get("error"):
+                st.error(result["error"])
+            else:
+                cur = result["current"]
+                fund = result["fundamental"]
+                us = result["us_market"]
+                news_list = result["news"]
+
+                # 快速摘要卡片
+                mc1,mc2,mc3,mc4 = st.columns(4)
+                mc1.metric("SOP訊號", result["sop"].get("signal","N/A"))
+                mc2.metric("波浪位置", result["wave_title"].split()[0] if result["wave_title"] else "N/A")
+                pe_val = fund.get("pe")
+                mc3.metric("本益比P/E", f"{pe_val:.1f}" if pe_val else "N/A")
+                mc4.metric("法人目標", f"{fund.get('target_mean','N/A')}")
+
+                # 新聞摘要
+                if news_list:
+                    st.markdown("#### 📰 最新新聞")
+                    for n_item in news_list[:5]:
+                        col_a, col_b = st.columns([1, 6])
+                        col_a.markdown(n_item["sentiment"])
+                        col_b.markdown(f"[{n_item['title']}]({n_item['link']}) `{n_item['pub']}`")
+
+                # 美股連動
+                if us:
+                    st.markdown("#### 🌏 美股即時")
+                    us_cols = st.columns(len(us))
+                    for idx,(tk,uv) in enumerate(us.items()):
+                        icon = "🔺" if uv["pct"]>0 else "💚"
+                        us_cols[idx].metric(uv["name"], f"{uv['price']}", f"{icon}{uv['pct']:+.2f}%")
+
+                # AI 完整報告書
+                st.markdown("---")
+                st.markdown(result["report_md"])
 
 # ════════════════════════════════════════
 # TAB 2：觀察名單
