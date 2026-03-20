@@ -323,7 +323,12 @@ with st.sidebar:
     else:
         st.markdown("<div style='background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);border-radius:10px;padding:10px 14px;font-size:13px;color:#f87171'>❌ 未設定 GROQ_API_KEY</div>",unsafe_allow_html=True)
     if tg_token_secret:
-        st.markdown("<div style='background:rgba(14,165,233,0.1);border:1px solid rgba(14,165,233,0.2);border-radius:10px;padding:8px 14px;font-size:13px;color:#38bdf8;margin-top:8px'>✅ Telegram 已連線</div>",unsafe_allow_html=True)
+        user_cid = user.get("telegram_chat_id","")
+        tg_status = "✅ 個人已綁定" if user_cid else "⚠️ 請到帳號設定填入你的 Chat ID"
+        tg_color  = "#38bdf8" if user_cid else "#fbbf24"
+        tg_bg     = "rgba(14,165,233,0.1)" if user_cid else "rgba(251,191,36,0.08)"
+        tg_border = "rgba(14,165,233,0.2)" if user_cid else "rgba(251,191,36,0.2)"
+        st.markdown(f"<div style='background:{tg_bg};border:1px solid {tg_border};border-radius:10px;padding:8px 14px;font-size:13px;color:{tg_color};margin-top:8px'>{tg_status}</div>",unsafe_allow_html=True)
     st.markdown("---")
     if st.button("🚪 登出",use_container_width=True): logout()
 
@@ -471,8 +476,26 @@ def get_quick_price(code):
 # TAB 1：個股分析
 # ════════════════════════════════════════
 with tab_ana:
-    c1,c2,c3=st.columns([3,1,2])
-    with c1: si=st.text_input("","2330",placeholder="輸入股票代號，如 2330",label_visibility="collapsed",key="ana_in")
+    # 取得用戶觀察名單當下拉選項
+    _my_codes = db.get_user_watchlist_codes(user["username"])
+    _wl_map   = db.get_global_watchlist() if _my_codes else {}
+    _wl_opts  = {f"{c} {_wl_map.get(c,c)}": c for c in _my_codes}
+
+    if _wl_opts:
+        sel_col, inp_col = st.columns([2,3])
+        with sel_col:
+            st.markdown("<span style='font-size:12px;color:#64748b'>📋 從觀察名單選擇</span>",unsafe_allow_html=True)
+            wl_sel = st.selectbox("", ["（手動輸入）"] + list(_wl_opts.keys()),
+                                  label_visibility="collapsed", key="wl_sel")
+        with inp_col:
+            st.markdown("<span style='font-size:12px;color:#64748b'>或直接輸入代號</span>",unsafe_allow_html=True)
+            _default = _wl_opts.get(wl_sel,"2330") if wl_sel != "（手動輸入）" else "2330"
+            si = st.text_input("", _default, placeholder="輸入股票代號，如 2330",
+                               label_visibility="collapsed", key="ana_in")
+    else:
+        si=st.text_input("","2330",placeholder="輸入股票代號，如 2330",label_visibility="collapsed",key="ana_in")
+
+    c2,c3=st.columns([1,2])
     with c2: run_btn=st.button("🚀 分析",type="primary",use_container_width=True)
     with c3: add_wl=st.button("➕ 加入觀察名單",use_container_width=True,key="ana_wl")
 
@@ -800,6 +823,37 @@ with tab_tgt:
             <div style='color:#64748b;font-size:14px'>設定目標價後每日自動追蹤進度<br>SOP 觸發時自動推播到你的 Telegram</div>
         </div>""",unsafe_allow_html=True)
     else:
+        # ── 總覽卡片格 ──
+        st.markdown("#### 📊 目標價總覽")
+        grid_cols = st.columns(min(len(my_tgts), 3))
+        for idx,(code,entry) in enumerate(my_tgts.items()):
+            price_g,price_prev_g = get_quick_price(code)
+            nm_g = fetch_name(code)
+            if price_g:
+                gap_g = entry["target_price"] - price_g
+                gp_g  = gap_g / price_g * 100
+                prog_g = min(100, max(0, price_g / entry["target_price"] * 100))
+                reached_g = price_g >= entry["target_price"]
+                close_g   = 0 < gp_g <= 5
+                sc_g = "#4ade80" if reached_g else "#fbbf24" if close_g else "#38bdf8"
+                st_txt = "✅ 已達標" if reached_g else f"🔥 差{gp_g:.1f}%" if close_g else f"📈 {gp_g:.1f}%"
+                day_g = (price_g - price_prev_g) / price_prev_g * 100 if price_prev_g else 0
+            else:
+                prog_g=50; sc_g="#64748b"; st_txt="—"; price_g=0; gp_g=0; day_g=0; reached_g=False; close_g=False
+            grid_cols[idx % 3].markdown(f"""
+            <div class='tgt-card {"reached" if reached_g else "close" if close_g else ""}' style='padding:16px 18px;cursor:pointer'>
+                <div style='font-size:13px;font-weight:700;color:#94a3b8'>{nm_g} <span style='color:#475569;font-size:11px'>{code}</span></div>
+                <div style='font-size:22px;font-weight:900;color:#f0f4ff;margin:6px 0'>{f"{price_g:.2f}" if price_g else "—"}</div>
+                <div style='font-size:11px;color:{"#4ade80" if day_g>0 else "#f87171"}'>{f"{day_g:+.2f}%" if price_g else ""}</div>
+                <div class='tgt-progress-bg' style='margin:10px 0 6px'><div class='tgt-progress-fill {"reached" if reached_g else "close" if close_g else ""}' style='width:{prog_g:.0f}%'></div></div>
+                <div style='display:flex;justify-content:space-between;font-size:11px'>
+                    <span style='color:#64748b'>目標 {entry["target_price"]:.2f}</span>
+                    <span style='color:{sc_g};font-weight:700'>{st_txt}</span>
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+        st.markdown("---")
+        st.markdown("#### 🔍 詳細分析")
         for code,entry in my_tgts.items():
             nm_t=fetch_name(code)
             price_now,price_prev=get_quick_price(code)
