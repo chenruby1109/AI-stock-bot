@@ -487,7 +487,7 @@ with tab_ana:
         sc1,sc2,sc3 = st.columns([2,2,1])
         with sc1:
             st.markdown("<span style='font-size:12px;color:#64748b;letter-spacing:.5px'>📋 從觀察名單快選</span>",unsafe_allow_html=True)
-            wl_sel = st.selectbox("","" , options=_opts,
+            wl_sel = st.selectbox("", options=_opts,
                                   label_visibility="collapsed", key="wl_sel")
         with sc2:
             st.markdown("<span style='font-size:12px;color:#64748b;letter-spacing:.5px'>或輸入代號</span>",unsafe_allow_html=True)
