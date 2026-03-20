@@ -143,65 +143,96 @@ def get_market_data(tickers_with_name: list) -> list:
 
 def get_trump_posts(max_items: int = 5) -> list:
     """
-    從 Truth Social RSS 抓取 Trump 最新發文
-    回傳: [{"text","time","url"}, ...]
+    抓取 Trump 最新言論
+    策略1：Truth Social RSS（常被封鎖）
+    策略2：Google News 搜尋 Trump 最新新聞
     """
     posts = []
-    try:
-        # Truth Social RSS
-        url = "https://truthsocial.com/@realDonaldTrump.rss"
-        r = requests.get(url, headers={
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/rss+xml,application/xml;q=0.9,*/*;q=0.8",
-        }, timeout=10)
 
-        if r.status_code == 200:
+    # 策略1：嘗試 Truth Social
+    for rss_url in [
+        "https://truthsocial.com/@realDonaldTrump.rss",
+        "https://www.trumptruth.com/rss",
+    ]:
+        try:
+            r = requests.get(rss_url, headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                "Accept": "application/rss+xml,application/xml;q=0.9",
+            }, timeout=8)
+            if r.status_code != 200: continue
             root = ET.fromstring(r.content)
-            channel = root.find("channel")
-            if channel is None: raise Exception("no channel")
-            items = channel.findall("item")
-            for item in items[:max_items]:
+            for item in root.iter("item"):
                 title = item.findtext("title","")
                 desc  = item.findtext("description","")
                 link  = item.findtext("link","")
                 pub   = item.findtext("pubDate","")
-                # 清理 HTML tags
-                text = re.sub(r'<[^>]+>', '', desc or title)
-                text = text.strip()
+                text  = re.sub(r'<[^>]+>', '', desc or title).strip()
                 if not text: continue
-                # 時間格式化
                 try:
                     from email.utils import parsedate_to_datetime
                     dt = parsedate_to_datetime(pub)
                     time_str = dt.strftime("%m/%d %H:%M")
                 except:
                     time_str = pub[:16] if pub else ""
-                posts.append({"text": text[:200], "time": time_str, "url": link})
-    except Exception as e:
-        # fallback: 試另一個端點
+                posts.append({"text": text[:250], "time": time_str, "url": link,
+                              "source": "Truth Social"})
+                if len(posts) >= max_items: break
+            if posts: break
+        except: continue
+
+    # 策略2：若策略1失敗，用 Google News 抓 Trump 最新言論新聞
+    if not posts:
         try:
-            url2 = "https://rss.app/feeds/LKJa4FbkUAq4XWBV.xml"
-            r2 = requests.get(url2, headers={"User-Agent":"Mozilla/5.0"}, timeout=8)
-            if r2.status_code == 200:
-                root = ET.fromstring(r2.content)
+            query = "Trump tariff trade Taiwan semiconductor"
+            url = f"https://news.google.com/rss/search?q={requests.utils.quote(query)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+            r = requests.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
+            if r.status_code == 200:
+                root = ET.fromstring(r.content)
                 for item in root.iter("item"):
-                    title = item.findtext("title","")
-                    desc  = item.findtext("description","")
-                    link  = item.findtext("link","")
+                    title = item.findtext("title","").strip()
+                    link  = item.findtext("link","").strip()
                     pub   = item.findtext("pubDate","")
-                    text  = re.sub(r'<[^>]+>', '', desc or title).strip()
-                    if not text: continue
+                    if not title: continue
                     try:
                         from email.utils import parsedate_to_datetime
                         dt = parsedate_to_datetime(pub)
                         time_str = dt.strftime("%m/%d %H:%M")
                     except:
                         time_str = ""
-                    posts.append({"text": text[:200], "time": time_str, "url": link})
+                    posts.append({"text": title[:250], "time": time_str, "url": link,
+                                  "source": "Google News"})
                     if len(posts) >= max_items: break
-        except:
-            posts = [{"text":"⚠️ Trump Truth Social 目前無法連線，請稍後再試",
-                      "time":"","url":""}]
+        except: pass
+
+    # 策略3：搜尋英文川普相關最新消息
+    if not posts:
+        try:
+            for q in ["Trump tariff","Trump trade war","Trump Taiwan"]:
+                url = f"https://news.google.com/rss/search?q={requests.utils.quote(q)}&hl=en-US&gl=US&ceid=US:en"
+                r = requests.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=8)
+                if r.status_code != 200: continue
+                root = ET.fromstring(r.content)
+                for item in root.iter("item"):
+                    title = item.findtext("title","").strip()
+                    link  = item.findtext("link","").strip()
+                    pub   = item.findtext("pubDate","")
+                    if not title: continue
+                    try:
+                        from email.utils import parsedate_to_datetime
+                        dt = parsedate_to_datetime(pub)
+                        time_str = dt.strftime("%m/%d %H:%M")
+                    except:
+                        time_str = ""
+                    posts.append({"text": title[:250], "time": time_str, "url": link,
+                                  "source": "Google News (EN)"})
+                    if len(posts) >= max_items: break
+                if posts: break
+        except: pass
+
+    if not posts:
+        posts = [{"text": "⚠️ 目前無法取得川普最新言論，請直接前往 truthsocial.com/@realDonaldTrump",
+                  "time": "", "url": "https://truthsocial.com/@realDonaldTrump",
+                  "source": ""}]
     return posts
 
 
