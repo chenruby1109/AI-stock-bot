@@ -645,7 +645,7 @@ with tab_ana:
         cw3.error(f"⚡ 30分鐘\n\n## {w_30}")
         if WC_READY and wc.PLOTLY_OK:
             st.markdown("#### 📊 日K線圖 + 波浪標注")
-            _fig = wc.build_kline_chart(df_d, w_d, nm, cc)
+            _fig = wc.build_kline_chart(df_d, df_60=df_60, wave_label_d=w_d, stock_name=nm, code=cc)
             if _fig:
                 st.plotly_chart(_fig, use_container_width=True, config={"displayModeBar":False})
         else:
