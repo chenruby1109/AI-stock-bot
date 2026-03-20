@@ -583,24 +583,69 @@ with tab_ana:
         </div>
         """,unsafe_allow_html=True)
 
-        # 目標價
+        # ── 目標價（第一欄位緊接在行情下方）──
         my_tgt=db.get_user_target(user["username"],cc)
         if my_tgt:
             tc=db.check_target_reached(t["Close"],my_tgt["target_price"])
             gp=tc["gap_pct"]; prog=min(100,max(0,100-gp)) if gp>0 else 100
             cls="reached" if gp<=0 else "close" if gp<=5 else ""
             sc="#4ade80" if gp<=0 else "#fbbf24" if gp<=5 else "#38bdf8"
+
+            # 取得法人目標價
+            analyst_target = ""
+            try:
+                for sfx in [".TW",".TWO"]:
+                    _info = yf.Ticker(cc+sfx).info
+                    _at = _info.get("targetMeanPrice")
+                    if _at:
+                        analyst_target = f"法人目標價：{_at:.2f}"
+                        break
+            except: pass
+
             st.markdown(f"""
-            <div class='tgt-card {cls}' style='margin-bottom:20px'>
-                <span style='font-size:11px;color:#64748b;letter-spacing:1px;text-transform:uppercase'>🎯 你的目標價</span>
-                <div style='display:flex;align-items:center;gap:16px;margin-top:6px'>
-                    <span style='font-size:28px;font-weight:900;color:#38bdf8'>{my_tgt['target_price']:.2f}</span>
-                    <span style='font-size:14px;font-weight:700;color:{sc}'>{tc['status']}</span>
+            <div class='tgt-card {cls}'>
+                <div style='display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px'>
+                    <div>
+                        <div style='font-size:11px;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px'>🎯 你的目標價</div>
+                        <div style='display:flex;align-items:center;gap:12px'>
+                            <span style='font-size:30px;font-weight:900;color:#38bdf8'>{my_tgt['target_price']:.2f}</span>
+                            <span style='font-size:14px;font-weight:700;color:{sc}'>{tc['status']}</span>
+                        </div>
+                        <div style='font-size:12px;color:#64748b;margin-top:4px'>{tc['desc']}</div>
+                    </div>
+                    {f'<div style="text-align:right;font-size:12px;color:#94a3b8;padding-top:4px">📊 {analyst_target}</div>' if analyst_target else ''}
                 </div>
                 <div class='tgt-progress-bg'><div class='tgt-progress-fill {cls}' style='width:{prog:.0f}%'></div></div>
-                <span style='font-size:12px;color:#64748b'>{tc['desc']}</span>
+                <div style='display:flex;justify-content:space-between;font-size:11px;color:#475569'>
+                    <span>現價 {float(t["Close"]):.2f}</span>
+                    <span>{prog:.0f}%</span>
+                    <span>目標 {my_tgt['target_price']:.2f}</span>
+                </div>
             </div>
             """,unsafe_allow_html=True)
+        else:
+            # 沒設目標價時顯示法人目標價
+            try:
+                for sfx in [".TW",".TWO"]:
+                    _info = yf.Ticker(cc+sfx).info
+                    _at   = _info.get("targetMeanPrice")
+                    _ath  = _info.get("targetHighPrice")
+                    _atl  = _info.get("targetLowPrice")
+                    _anc  = _info.get("numberOfAnalystOpinions",0)
+                    if _at:
+                        _gap = (_at - float(t["Close"])) / float(t["Close"]) * 100
+                        st.markdown(f"""<div class='card-sm'>
+                            <span style='font-size:12px;color:#64748b'>📊 法人目標價（{_anc}位分析師）</span>
+                            <span style='float:right;font-weight:700;color:#38bdf8'>
+                                {_at:.2f}  <span style='font-size:11px;color:{"#4ade80" if _gap>0 else "#f87171"}'>
+                                ({_gap:+.1f}%)</span>
+                            </span>
+                            <div style='font-size:11px;color:#475569;margin-top:4px'>
+                                低：{_atl:.2f} ｜ 高：{_ath:.2f}
+                            </div>
+                        </div>""",unsafe_allow_html=True)
+                        break
+            except: pass
 
         st.markdown("---")
 
@@ -612,8 +657,10 @@ with tab_ana:
             hints=""
             if sop["cond_vol"]:  hints+=f"💡 量比{vol_r}x（≥1.5加分）&nbsp;&nbsp;"
             if sop["wave_hint"]: hints+=sop['wave_hint']
-            phtml=(f"🦁 激進 <b>{buy_agg:.2f}</b> &nbsp;｜&nbsp; 🐢 保守 <b>{buy_con:.2f}</b> &nbsp;｜&nbsp; 🛑 停損 <b>{stop:.2f}</b>"
-                   if signal=="BUY" else f"⚡ 建議出場 <b>{t['Close']:.2f}</b> &nbsp;｜&nbsp; 🛑 停損 <b>{stop:.2f}</b>")
+            if signal=="BUY":
+                phtml=(f"🦁 激進 <b>{buy_agg:.2f}</b> &nbsp;·&nbsp; 🐢 保守 <b>{buy_con:.2f}</b> &nbsp;·&nbsp; 🛑 停損 <b>{stop:.2f}</b>")
+            else:
+                phtml=(f"⚡ 建議出場 <b>{float(t['Close']):.2f}</b> &nbsp;·&nbsp; 🛑 停損 <b>{stop:.2f}</b>")
             st.markdown(f"""<div class='{css}'>
                 <div class='sop-title'>{atxt}</div>
                 <div class='sop-conds'>✅ KD：{sop['kd_label']} &nbsp;&nbsp; ✅ MACD：{sop['macd_label']} &nbsp;&nbsp; ✅ SAR：{sop['sar_label']}</div>
@@ -807,23 +854,32 @@ with tab_ana:
                     nc1.markdown(n["sentiment"])
                     nc2.markdown(f"[{n['title']}]({n['url']})  `{n['time']}`")
 
-            # Trump Truth Social
+            # Trump 最新言論
             trump_posts = gm_data["trump_posts"]
-            with st.expander("🇺🇸 Trump Truth Social 最新發文", expanded=True):
+            src_label = trump_posts[0].get("source","") if trump_posts else ""
+            is_ts = "Truth Social" in src_label
+            expander_title = (
+                "🇺🇸 Trump Truth Social 最新發文" if is_ts
+                else "🇺🇸 Trump 最新言論（Google News）"
+            )
+            with st.expander(expander_title, expanded=True):
+                if not is_ts and trump_posts and "⚠️" not in trump_posts[0]["text"]:
+                    st.caption("⚠️ Truth Social 暫時無法連線，以下為 Google News 搜尋到的川普相關最新新聞")
                 if trump_posts:
                     for p in trump_posts:
+                        src_badge = f"<span style='background:rgba(249,115,22,0.2);color:#f97316;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:8px'>{p.get('source','')}</span>" if p.get('source') else ""
                         st.markdown(f"""
                         <div style='background:rgba(255,255,255,0.04);border-left:3px solid #f97316;
                              border-radius:8px;padding:12px 16px;margin-bottom:10px'>
                             <div style='font-size:13px;color:#e2e8f0;line-height:1.7'>{p["text"]}</div>
                             <div style='font-size:11px;color:#64748b;margin-top:6px'>
-                                ⏰ {p["time"]}
-                                {"&nbsp;&nbsp;<a href='" + p["url"] + "' target='_blank' style='color:#38bdf8'>查看原文</a>" if p["url"] else ""}
+                                {src_badge}⏰ {p["time"]}
+                                {"&nbsp;&nbsp;<a href='" + p["url"] + "' target='_blank' style='color:#38bdf8'>查看原文</a>" if p.get("url") else ""}
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
                 else:
-                    st.caption("目前無法取得 Trump Truth Social 資料")
+                    st.caption("目前無法取得川普相關資料")
 
         # ── AI 報告書 ──
         st.markdown("---")
