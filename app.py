@@ -886,7 +886,7 @@ with tab_tgt:
                             </div>
                             <div style='text-align:right'>
                                 <div style='font-size:11px;color:#64748b'>現價</div>
-                                <div style='font-size:20px;font-weight:800;color:#f8fafc'>{price_now:.2f if price_now else 'N/A'}</div>
+                                <div style='font-size:20px;font-weight:800;color:#f8fafc'>{f'{price_now:.2f}' if price_now else 'N/A'}</div>
                                 <div style='font-size:12px;color:{"#4ade80" if day_pct>0 else "#f87171"}'>{f"+{day_pct:.2f}%" if day_pct>0 else f"{day_pct:.2f}%"}</div>
                             </div>
                         </div>
@@ -899,7 +899,7 @@ with tab_tgt:
                                 <div class='tgt-progress-fill {card_cls}' style='width:{prog:.0f}%'></div>
                             </div>
                             <div style='display:flex;justify-content:space-between;font-size:11px;color:#475569;margin-top:4px'>
-                                <span>現價 {price_now:.2f if price_now else '-'}</span>
+                                <span>現價 {f'{price_now:.2f}' if price_now else '-'}</span>
                                 <span>{prog:.0f}%</span>
                                 <span>目標 {entry['target_price']:.2f}</span>
                             </div>
