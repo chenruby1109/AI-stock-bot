@@ -16,6 +16,12 @@ try:
 except Exception:
     AI_READY = False
 
+try:
+    import broker as bk
+    BROKER_READY = True
+except Exception:
+    BROKER_READY = False
+
 # ─────────────────────────────────────────
 st.set_page_config(page_title="AI Stock Bot", page_icon="📈", layout="wide")
 
@@ -295,9 +301,9 @@ is_admin = user.get("role") == "admin"
 
 # ── 檢查 GROQ Key ──
 try:
-    groq_key = st.secrets.get("GROQ_API_KEY", "")
+    groq_key = st.secrets["GROQ_API_KEY"]
 except Exception:
-    groq_key = ""
+    import os; groq_key = os.environ.get("GROQ_API_KEY","")
 
 with st.sidebar:
     st.markdown(f"""
@@ -471,6 +477,12 @@ def fibonacci(df):
             "high":hi,"low":lo}
 
 def push_tg(token,chat_id,signal,name,code,price,sop,buy_agg,buy_con,stop):
+    if not token:
+        try: token=st.secrets.get("TG_TOKEN","")
+        except: pass
+    if not chat_id:
+        try: chat_id=st.secrets.get("TG_CHAT_ID","")
+        except: pass
     if not token or not chat_id: return False
     e="🚀" if signal=="BUY" else "⚠️"
     a="BUY — SOP三線觸發！" if signal=="BUY" else "SELL — 高檔出場！"
@@ -681,7 +693,52 @@ with tab_ana:
                 </div>
             </div>""", unsafe_allow_html=True)
 
-        # ── 目標價預估 ──
+        # -- Broker data --
+        st.markdown("---")
+        st.markdown("#### \U0001f3e6 \u4e3b\u529b\u5238\u5546\u9032\u51fa\uff08\u7576\u65e5\uff09")
+        if not BROKER_READY:
+            st.caption("\u26a0\ufe0f broker.py \u672a\u4e0a\u50b3\uff0c\u8acb\u5148\u4e0a\u50b3\u8a72\u6a94\u6848")
+        else:
+            with st.spinner("\u8f09\u5165\u4e3b\u529b\u8cc7\u6599..."):
+                bk_data = bk.get_broker_data(cc)
+                inst    = bk.get_institutional(cc)
+            if bk_data.get("error"):
+                st.caption(f"\u26a0\ufe0f {bk_data['error']}")
+            else:
+                net = bk_data["net_total"]
+                net_color = "#4ade80" if net>0 else "#f87171" if net<0 else "#94a3b8"
+                net_icon  = "\U0001f53a" if net>0 else "\U0001f49a" if net<0 else "\u27a1\ufe0f"
+                st.markdown(
+                    f"<div class='card-sm' style='text-align:center;margin-bottom:12px'>"
+                    f"<span style='font-size:12px;color:#64748b'>\u8cc7\u6599\u65e5\u671f: {bk_data.get('date','-')} |\u5168\u9ad4\u5238\u5546\u6de8\u8cb7\u8d85</span>"
+                    f"<div style='font-size:24px;font-weight:800;color:{net_color};margin-top:4px'>{net_icon} {abs(net):,} \u5f35</div>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+                if not inst.get("error"):
+                    ia,ib,ic = st.columns(3)
+                    ia.metric("\U0001f310 \u5916\u8cc7", f"{inst.get('foreign',0):+,} \u5f35")
+                    ib.metric("\U0001f3e6 \u6295\u4fe1", f"{inst.get('trust',0):+,} \u5f35")
+                    ic.metric("\U0001f3e2 \u81ea\u71df", f"{inst.get('dealer',0):+,} \u5f35")
+                ba, sa = st.columns(2)
+                with ba:
+                    st.markdown("<span style='color:#4ade80;font-weight:700;font-size:14px'>\U0001f53a \u4e3b\u529b\u8cb7\u8d85\u524d10</span>", unsafe_allow_html=True)
+                    for b in bk_data["buy_brokers"][:8]:
+                        st.markdown(
+                            f"<div class='card-sm' style='padding:8px 14px;margin-bottom:4px'>"
+                            f"<span style='font-size:13px;color:#e2e8f0'>{b['name']}</span>"
+                            f"<span style='float:right;color:#4ade80;font-weight:700'>+{b['net']:,}</span>"
+                            f"</div>", unsafe_allow_html=True)
+                with sa:
+                    st.markdown("<span style='color:#f87171;font-weight:700;font-size:14px'>\U0001f49a \u4e3b\u529b\u8ce3\u8d85\u524d10</span>", unsafe_allow_html=True)
+                    for b in bk_data["sell_brokers"][:8]:
+                        st.markdown(
+                            f"<div class='card-sm' style='padding:8px 14px;margin-bottom:4px'>"
+                            f"<span style='font-size:13px;color:#e2e8f0'>{b['name']}</span>"
+                            f"<span style='float:right;color:#f87171;font-weight:700'>{b['net']:,}</span>"
+                            f"</div>", unsafe_allow_html=True)
+
+        # -- target price --
         st.markdown("---")
         st.markdown("#### 🎯 AI 目標價預估")
         tc1,tc2,tc3=st.columns(3)
