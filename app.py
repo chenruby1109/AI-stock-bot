@@ -14,6 +14,8 @@ try:    import ai_report;  AI_READY = True
 except: AI_READY = False
 try:    import broker as bk; BROKER_READY = True
 except: BROKER_READY = False
+try:    import wave_chart as wc; WC_READY = True
+except: WC_READY = False
 
 # ── API Keys ──
 def _secret(key):
