@@ -424,7 +424,7 @@ def build_kline_chart(df: pd.DataFrame, wave_label_d: str,
     fig.update_layout(
         yaxis2=dict(
             title="成交量",
-            titlefont=dict(size=10),
+            title_font=dict(size=10),
         )
     )
     return fig
