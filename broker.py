@@ -1,101 +1,73 @@
 """
-broker.py — 主力券商進出資料模組
-資料來源：台灣證交所 (TWSE) / 證券商當日進出
+broker.py — 主力券商進出資料
+資料來源：TWSE 公開資訊觀測站
 """
 import requests
-import pandas as pd
+import json
 from datetime import datetime, timedelta
 
-def get_broker_data(code: str) -> dict:
-    """
-    取得個股當日主力券商進出
-    回傳 {
-        "buy_brokers":  [{"name", "buy", "sell", "net"}],
-        "sell_brokers": [...],
-        "net_total":    int,
-        "date":         str,
-        "error":        None or str
-    }
-    """
-    try:
-        today = datetime.now().strftime("%Y%m%d")
-        # 嘗試今天，若無資料退一天
-        for delta in [0, 1, 2, 3]:
-            d = (datetime.now() - timedelta(days=delta)).strftime("%Y%m%d")
-            url = f"https://www.twse.com.tw/pcversion/zh/fund/T86?response=json&date={d}&stockNo={code}"
-            r = requests.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=8)
-            if r.status_code != 200: continue
+HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+
+def _try_dates(build_url, days=5):
+    """嘗試最近幾個交易日，回傳第一個有效的 (data, date_str)"""
+    for delta in range(days):
+        d = (datetime.now() - timedelta(days=delta)).strftime("%Y%m%d")
+        try:
+            r = requests.get(build_url(d), headers=HEADERS, timeout=10)
+            if r.status_code != 200 or not r.text.strip():
+                continue
             data = r.json()
             if data.get("stat") == "OK" and data.get("data"):
-                break
-        else:
-            return {"error": "無法取得主力資料（非交易日或代號錯誤）"}
+                return data, d
+        except Exception:
+            continue
+    return None, None
 
-        rows = data["data"]
-        date_str = data.get("date", d)
+def get_broker_data(code: str) -> dict:
+    """主力券商買賣超 Top 10"""
+    def url(d): return f"https://www.twse.com.tw/fund/T86?response=json&date={d}&stockNo={code}"
+    data, d = _try_dates(url)
+    if not data:
+        # 嘗試上市股票另一個 endpoint
+        def url2(d): return f"https://www.twse.com.tw/pcversion/zh/fund/T86?response=json&date={d}&stockNo={code}"
+        data, d = _try_dates(url2)
+    if not data:
+        return {"error": f"⚠️ 主力資料暫無（非交易日或代號 {code} 為上櫃股票）", "buy_brokers":[], "sell_brokers":[], "net_total":0}
 
-        brokers = []
-        for row in rows:
-            # row: [券商代號, 券商名稱, 買進張數, 賣出張數, 差異張數]
-            try:
-                name = str(row[1]).strip()
-                buy  = int(str(row[2]).replace(",",""))
-                sell = int(str(row[3]).replace(",",""))
-                net  = int(str(row[4]).replace(",",""))
-                brokers.append({"name":name,"buy":buy,"sell":sell,"net":net})
-            except: continue
+    brokers = []
+    for row in data["data"]:
+        try:
+            def _n(s): return int(str(s).replace(",","").replace(" ","") or "0")
+            brokers.append({"name": str(row[1]).strip(),
+                            "buy":  _n(row[2]), "sell": _n(row[3]), "net": _n(row[4])})
+        except: continue
 
-        # 按淨買超排序
-        brokers.sort(key=lambda x: x["net"], reverse=True)
-        buy_top  = [b for b in brokers if b["net"] > 0][:10]
-        sell_top = [b for b in brokers if b["net"] < 0][-10:][::-1]
-        net_total = sum(b["net"] for b in brokers)
-
-        return {
-            "buy_brokers":  buy_top,
-            "sell_brokers": sell_top,
-            "net_total":    net_total,
-            "date":         date_str,
-            "all_brokers":  brokers,
-            "error":        None
-        }
-    except Exception as e:
-        return {"error": f"取得資料失敗：{e}"}
-
+    brokers.sort(key=lambda x: x["net"], reverse=True)
+    return {
+        "error":        None,
+        "date":         d,
+        "net_total":    sum(b["net"] for b in brokers),
+        "buy_brokers":  [b for b in brokers if b["net"] > 0][:10],
+        "sell_brokers": [b for b in brokers if b["net"] < 0][-10:][::-1],
+    }
 
 def get_institutional(code: str) -> dict:
-    """
-    三大法人買賣超
-    回傳 {foreign, trust, dealer, total, date, error}
-    """
+    """三大法人買賣超"""
+    def url(d): return f"https://www.twse.com.tw/fund/MI_QFIIS?response=json&date={d}&stockNo={code}"
+    data, d = _try_dates(url)
+    if not data:
+        return {"error": "三大法人資料暫無"}
     try:
-        for delta in [0,1,2,3]:
-            d = (datetime.now() - timedelta(days=delta)).strftime("%Y%m%d")
-            url = f"https://www.twse.com.tw/fund/T86?response=json&date={d}&stockNo={code}"
-            r = requests.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=8)
-            if r.status_code != 200: continue
-            data = r.json()
-            if data.get("stat") == "OK": break
-        else:
-            return {"error": "無法取得三大法人資料"}
-
-        # 另一個 API：三大法人
-        url2 = f"https://www.twse.com.tw/fund/MI_QFIIS?response=json&date={d}&stockNo={code}"
-        r2 = requests.get(url2, headers={"User-Agent":"Mozilla/5.0"}, timeout=8)
-        if r2.status_code == 200:
-            d2 = r2.json()
-            if d2.get("stat") == "OK" and d2.get("data"):
-                row = d2["data"][0]
-                def to_int(s):
-                    try: return int(str(s).replace(",","").replace(" ",""))
-                    except: return 0
-                return {
-                    "foreign": to_int(row[4]) if len(row)>4 else 0,  # 外資
-                    "trust":   to_int(row[7]) if len(row)>7 else 0,  # 投信
-                    "dealer":  to_int(row[10]) if len(row)>10 else 0, # 自營
-                    "date":    d,
-                    "error":   None
-                }
-        return {"error": "三大法人資料格式異常"}
+        row = data["data"][0]
+        def _n(s):
+            try: return int(str(s).replace(",","").replace(" ","").lstrip("+") or "0")
+            except: return 0
+        # 欄位：外資買進、外資賣出、外資差異、投信買、投信賣、投信差異、自營買、自營賣、自營差異
+        # 不同 API 版本欄位數不同，安全取值
+        foreign = _n(row[4]) if len(row) > 4 else 0
+        trust   = _n(row[7]) if len(row) > 7 else 0
+        dealer  = _n(row[10]) if len(row) > 10 else 0
+        total   = foreign + trust + dealer
+        return {"error": None, "foreign": foreign, "trust": trust, "dealer": dealer, "total": total, "date": d}
     except Exception as e:
         return {"error": str(e)}
