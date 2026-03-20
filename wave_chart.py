@@ -1,10 +1,13 @@
 """
-wave_chart.py V2 — 完整艾略特波浪計數 + 日K線圖
-自動偵測高低點，標示完整浪數（1-2-3-4-5 + A-B-C）
+wave_chart.py V3 — 完整艾略特波浪計數（大浪 + 子浪）
+邏輯：
+  1. 用長週期（order大）找大浪轉折點 → 標示①②③④⑤ / A-B-C
+  2. 在最後一段大浪內，用短週期找子浪 → 標示ⅰⅱⅲⅳⅴ / a-b-c
+  3. 當前所在浪 = 大浪位置.子浪位置（如 3-3 = 第3大浪的第3子浪）
+  4. 全部用同一套邏輯，確保「⑤完成後顯示修正ABC」
 """
 import numpy as np
 import pandas as pd
-from datetime import datetime
 
 try:
     import plotly.graph_objects as go
@@ -16,81 +19,111 @@ except ImportError:
 
 
 # ─────────────────────────────────────────
-# 波浪資訊對照表
+# 波浪資訊
 # ─────────────────────────────────────────
 WAVE_INFO = {
-    "3-1": {"color":"#38bdf8","label":"第1浪","emoji":"🌱","desc":"趨勢初升，多空轉換點",
-            "scenarios":[
-                {"name":"✅ 主要劇本（65%）：延伸第1浪 → 第2浪修正","color":"#38bdf8",
-                 "desc":"成交量逐步放大，突破前高後拉回測試支撐。預計修正38.2%~61.8%為最佳布局點。",
-                 "cond":"量能持續，突破前高，KD未死叉","risk":"⚠️ 跌破起漲點型態失效"},
-                {"name":"📊 次要劇本（25%）：High-C整理後再攻","color":"#fbbf24",
-                 "desc":"第1浪完成後高檔震盪，K值壓縮在40-60區間整理。","cond":"量縮整理，MA5支撐不破","risk":"⚠️ 整理時間過長需警戒"},
-                {"name":"❌ 風險劇本（10%）：假突破回起漲點","color":"#f87171",
-                 "desc":"量價背離，突破後無法站穩，回測起漲點。","cond":"量縮價漲，KD高檔死叉","risk":"🛑 停損：跌破起漲點"},
-            ]},
-    "3-3": {"color":"#4ade80","label":"第3浪主升","emoji":"🚀","desc":"最強動力波，主力全力買進",
-            "scenarios":[
-                {"name":"✅ 主要劇本（70%）：噴出延伸 → 目標1.618倍","color":"#4ade80",
-                 "desc":"第3浪最長最強，目標1.618~2.618倍擴展。逢拉回沿5MA操作。",
-                 "cond":"MACD紅柱放大，KD>50，量比>1.5","risk":"⚠️ 乖離過大（>15%）先獲利了結部分"},
-                {"name":"📊 次要劇本（20%）：橫盤整理後二次攻擊","color":"#fbbf24",
-                 "desc":"主升稍歇高檔短暫震盪，MA5跟上後再度出量攻擊。","cond":"量縮整理不破MA10，MACD高檔鈍化","risk":"⚠️ 注意量能是否持續"},
-                {"name":"❌ 風險劇本（10%）：提前結束進入第4浪","color":"#f87171",
-                 "desc":"長上影線+量縮反轉，主升可能提前結束。","cond":"高檔爆量長黑K，MACD翻綠","risk":"🛑 停損：跌破前一波高點"},
-            ]},
-    "3-5": {"color":"#fbbf24","label":"第5浪噴出末段","emoji":"🏔️","desc":"主升尾聲，注意高點反轉",
-            "scenarios":[
-                {"name":"✅ 主要劇本（50%）：完成第5浪 → ABC修正","color":"#fbbf24",
-                 "desc":"第5浪完成後預計ABC三波修正，A浪跌幅通常38.2%~61.8%。","cond":"量價背離，KD高檔死叉","risk":"⚠️ 此位置不宜重倉追高"},
-                {"name":"📊 次要劇本（30%）：延伸第5浪繼續上攻","color":"#38bdf8",
-                 "desc":"法人持續買超第5浪可能延伸，注意RSI背離。","cond":"法人持續買超，量能仍放大","risk":"⚠️ 嚴設停利"},
-                {"name":"❌ 風險劇本（20%）：失敗第5浪急速反轉","color":"#f87171",
-                 "desc":"無法突破第3浪高點形成失敗第5浪。","cond":"量縮無法過高，KD高檔鈍化後急跌","risk":"🛑 停損：跌破第4浪低點"},
-            ]},
-    "3-a": {"color":"#94a3b8","label":"高檔震盪","emoji":"☕","desc":"漲勢放緩，等待方向確認",
-            "scenarios":[
-                {"name":"✅ 主要劇本（55%）：量縮整理後再攻","color":"#4ade80","desc":"高檔收斂整理量縮正常，等待帶量突破。","cond":"量縮，均線持續上揚","risk":"⚠️ 整理過久重新評估"},
-                {"name":"❌ 風險劇本（45%）：進入修正","color":"#f87171","desc":"量縮後無法放量突破，進入較大幅度修正。","cond":"MACD翻綠，KD死叉，跌破MA5","risk":"🛑 停損：跌破前波低點"},
-            ]},
-    "4-a": {"color":"#fb923c","label":"第4浪初跌","emoji":"📉","desc":"主升後正常修正，提供加碼機會",
-            "scenarios":[
-                {"name":"✅ 主要劇本（60%）：修正至0.382 → 啟動第5浪","color":"#4ade80",
-                 "desc":"第4浪回測0.382~0.5費波，完成後啟動第5浪。KD低位金叉是最佳買點。","cond":"量縮見底，KD低檔金叉，守住MA60","risk":"⚠️ 第4浪不應跌破第1浪高點"},
-                {"name":"📊 次要劇本（25%）：複雜修正延伸","color":"#fbbf24","desc":"第4浪形成複雜修正（W形、三角整理）。","cond":"量縮震盪，每次反彈力道不足","risk":"⚠️ 耐心等待修正完成"},
-                {"name":"❌ 風險劇本（15%）：修正破位重新定義","color":"#f87171","desc":"跌破第1浪高點整個結構需重新定義。","cond":"跌破第1浪頂點，成交量放大下跌","risk":"🛑 確認跌破後立即出場"},
-            ]},
-    "4-b": {"color":"#f97316","label":"反彈逃命波","emoji":"👀","desc":"空頭反彈，趨勢仍弱",
-            "scenarios":[
-                {"name":"✅ 主要劇本（65%）：反彈至壓力後繼續下跌","color":"#f87171","desc":"空頭格局中技術性反彈，到壓力後再度下跌。","cond":"量縮反彈，均線空頭排列","risk":"⚠️ 此處不宜做多"},
-                {"name":"📊 次要劇本（25%）：反彈力道強形成底部","color":"#fbbf24","desc":"若反彈過前高且量能放大，可能是底部確立。","cond":"量增過前高，KD低位金叉","risk":"⚠️ 確認突破後才可做多"},
-            ]},
-    "4-c": {"color":"#a78bfa","label":"修正末端","emoji":"🪤","desc":"接近底部，等待反轉訊號",
-            "scenarios":[
-                {"name":"✅ 主要劇本（60%）：底部確立 → 啟動新一波","color":"#4ade80","desc":"K值低檔鈍化後回升，帶量長紅底部確立。","cond":"K值<20後回升，量縮後帶量紅K","risk":"⚠️ 停損：跌破前低"},
-                {"name":"📊 次要劇本（30%）：繼續打底延伸","color":"#fbbf24","desc":"W底或頭肩底正在形成，等待突破頸線。","cond":"量縮震盪，每次跌幅縮小","risk":"⚠️ 耐心等待突破確認"},
-                {"name":"❌ 風險劇本（10%）：假底繼續探低","color":"#f87171","desc":"帶量跌破前低，底部型態失敗。","cond":"量增跌破前低","risk":"🛑 立即出場"},
-            ]},
-    "C-3": {"color":"#f87171","label":"主跌段C浪","emoji":"🔻","desc":"空頭核心，避免抄底",
-            "scenarios":[
-                {"name":"✅ 主要劇本（65%）：繼續下跌完成C浪目標","color":"#f87171","desc":"C浪通常等於A浪長度或1.618倍，等量縮止跌。","cond":"量增下跌，均線空頭排列","risk":"🛑 多單全數出清"},
-                {"name":"📊 次要劇本（25%）：提前完成C浪形成底部","color":"#fbbf24","desc":"量縮後帶量長紅反轉，KD低位背離。","cond":"量縮放量長紅，KD低位背離","risk":"⚠️ 確認反轉後輕倉試做"},
-            ]},
-    "C-5": {"color":"#dc2626","label":"趕底急殺","emoji":"💥","desc":"恐慌性殺盤，極端超跌",
-            "scenarios":[
-                {"name":"✅ 主要劇本（55%）：超跌反彈確認底部","color":"#fbbf24","desc":"趕底急殺後通常強烈反彈，止跌K棒（長下影線）可輕倉試做。","cond":"量縮後爆量長紅，KD極低位","risk":"⚠️ 輕倉試做，嚴設停損"},
-                {"name":"❌ 風險劇本（45%）：繼續探底","color":"#f87171","desc":"無止跌訊號，恐慌賣壓持續。","cond":"量增繼續破低","risk":"🛑 勿抄底"},
-            ]},
-    "B-a": {"color":"#94a3b8","label":"跌深反彈","emoji":"↗️","desc":"空頭中的短線反彈",
-            "scenarios":[
-                {"name":"✅ 主要劇本（60%）：反彈至38.2%~61.8%後繼續空","color":"#f87171","desc":"空頭B浪反彈，到費波壓力後繼續空頭。","cond":"量縮反彈","risk":"⚠️ 空頭格局多單輕倉"},
-            ]},
-    "B-c": {"color":"#ef4444","label":"反彈高點","emoji":"⚠️","desc":"空頭反彈至壓力區，出場機會",
-            "scenarios":[
-                {"name":"✅ 主要劇本（70%）：逃命波高點","color":"#f87171","desc":"B浪c段為反彈最高點，是清倉或放空的最佳時機。","cond":"KD高位死叉，量縮，MACD翻綠","risk":"🛑 多單清倉，不追高"},
-                {"name":"📊 次要劇本（30%）：突破壓力趨勢反轉","color":"#4ade80","desc":"放量突破前高且MACD翻紅，可能是多頭反轉。","cond":"量增突破前高，KD低位金叉","risk":"⚠️ 突破後確認才進場"},
-            ]},
-    "N/A": {"color":"#64748b","label":"判斷中","emoji":"❓","desc":"資料不足","scenarios":[]},
+    "3-1": {"color":"#38bdf8","label":"第①浪內的ⅰ子浪","emoji":"🌱","desc":"起漲初動，試探性上攻",
+        "scenarios":[
+            {"name":"✅ 主要劇本（65%）：量能擴張突破前高，進入ⅲ浪加速段","color":"#38bdf8",
+             "desc":"ⅰ浪完成後通常有ⅱ浪回測（38.2%~61.8%），之後ⅲ浪才是主攻段，現在是耐心等待ⅱ浪低點加碼的機會。",
+             "cond":"量能逐步放大，KD金叉，MACD翻紅","risk":"⚠️ 停損設ⅰ浪起漲低點"},
+            {"name":"📊 次要劇本（25%）：形成高C整理後直接攻ⅲ浪","color":"#fbbf24",
+             "desc":"量縮整理後帶量長紅，直接進入第ⅲ浪強攻段。","cond":"量縮後量增，站上所有短期均線","risk":"⚠️ 若量縮破MA5需重新判斷"},
+            {"name":"❌ 風險劇本（10%）：假突破，大浪①未完成，回測起漲","color":"#f87171",
+             "desc":"量價背離，突破後縮量，可能整個①浪還在形成中。","cond":"縮量無法站上，KD高檔死叉","risk":"🛑 停損跌破起漲點"},
+        ]},
+    "3-3": {"color":"#4ade80","label":"第③浪主升段","emoji":"🚀","desc":"最強最長的主升浪，量能最大",
+        "scenarios":[
+            {"name":"✅ 主要劇本（70%）：③浪仍在延伸，目標1.618~2.618擴展","color":"#4ade80",
+             "desc":"③浪是最強的浪，通常是①浪的1.618倍或更長。MACD紅柱持續放大，每次拉回均是加碼點。子浪ⅲ→ⅳ→ⅴ仍未完成。",
+             "cond":"MACD紅柱最高，量能最大，KD>60保持多頭","risk":"⚠️ ③浪過熱乖離超15%可先減倉等回踩"},
+            {"name":"📊 次要劇本（20%）：③浪尾聲，即將進入④浪修正","color":"#fbbf24",
+             "desc":"③浪的ⅴ子浪正在完成，完成後④浪修正通常回測38.2%費波支撐。","cond":"量開始縮小，KD高位鈍化，MACD紅柱縮短","risk":"⚠️ 注意高點反轉訊號"},
+            {"name":"❌ 風險劇本（10%）：③浪提前結束，進入④大幅修正","color":"#f87171",
+             "desc":"若出現爆量長黑，③浪可能提前結束，④浪修正幅度可達整段漲幅50%。","cond":"爆量長黑K，MACD翻綠","risk":"🛑 停損設③浪起漲低點"},
+        ]},
+    "3-5": {"color":"#fbbf24","label":"第⑤浪末升段","emoji":"🏔️","desc":"主升尾聲，出現量價背離訊號",
+        "scenarios":[
+            {"name":"✅ 主要劇本（50%）：⑤浪完成 → 進入ABC大修正","color":"#fbbf24",
+             "desc":"⑤浪完成整個五浪上升結構，之後的A-B-C修正A浪跌幅通常達整個升幅的38.2%~61.8%。現在應逐步獲利了結，等待A浪底部再布局。",
+             "cond":"量價背離（價新高但量縮），KD頂背離，RSI>80","risk":"⚠️ 此位置絕不追高，分批減倉"},
+            {"name":"📊 次要劇本（30%）：⑤浪延伸，仍有上攻空間","color":"#38bdf8",
+             "desc":"若法人持續買超且量能仍放大，⑤浪可能延伸，但最終都會進入ABC修正。","cond":"法人買超持續，量能仍然放大","risk":"⚠️ 嚴設停利，勿戀戰"},
+            {"name":"❌ 風險劇本（20%）：失敗⑤浪 → 急速轉空","color":"#f87171",
+             "desc":"無法突破③浪高點形成失敗⑤浪，將快速進入熊市結構。","cond":"量縮無法過③浪高，KD高位死叉","risk":"🛑 停損③浪高點，立即出場"},
+        ]},
+    "3-a": {"color":"#94a3b8","label":"⑤浪後高檔震盪","emoji":"☕","desc":"五浪完成後高位整理，方向待確認",
+        "scenarios":[
+            {"name":"✅ 主要劇本（55%）：ABC修正已開始，等A浪低點","color":"#f97316",
+             "desc":"高位震盪通常是A浪的一部分，等待A浪完成（量縮止跌）後的B浪反彈出場機會。",
+             "cond":"量縮整理，均線開始走平","risk":"⚠️ 勿在此加碼"},
+            {"name":"❌ 風險劇本（45%）：快速轉弱，大A浪開始","color":"#f87171",
+             "desc":"若帶量跌破前支撐，A浪下跌加速。","cond":"量增破支撐，MACD翻綠","risk":"🛑 停損設前波高點"},
+        ]},
+    "4-a": {"color":"#fb923c","label":"④浪修正中（a子浪）","emoji":"📉","desc":"主升後④浪修正，a子浪下跌中",
+        "scenarios":[
+            {"name":"✅ 主要劇本（60%）：a→b→c三波修正後啟動⑤浪","color":"#4ade80",
+             "desc":"④浪a子浪下跌後，b子浪反彈，c子浪再跌到0.382~0.5費波支撐，完成後啟動⑤浪。b浪反彈是輕倉試多的機會。",
+             "cond":"量縮下跌，每天跌幅縮小，接近費波支撐","risk":"⚠️ 第4浪不應跌破第1浪高點"},
+            {"name":"📊 次要劇本（25%）：④浪複雜修正（W型或三角）","color":"#fbbf24",
+             "desc":"④浪形成更複雜的W底或三角收斂，需要更多時間，但最終都會啟動⑤浪。",
+             "cond":"量縮震盪，高低點收斂","risk":"⚠️ 耐心等待，不要搶進"},
+            {"name":"❌ 風險劇本（15%）：跌破①浪高點，重新定義結構","color":"#f87171",
+             "desc":"若跌破①浪頂點，艾略特結構需重新定義，可能是更大級別的修正。",
+             "cond":"帶量跌破①浪高點","risk":"🛑 全部出場，等待重新定義"},
+        ]},
+    "4-b": {"color":"#f97316","label":"④浪修正中（b子浪反彈）","emoji":"👀","desc":"④浪b子浪技術反彈，空頭趨勢未改",
+        "scenarios":[
+            {"name":"✅ 主要劇本（65%）：b浪反彈完成後，c浪再下探完成④浪","color":"#f97316",
+             "desc":"b浪反彈通常回測到前低（現壓力），反彈完成後c浪下跌才完成整個④浪修正，之後啟動⑤浪。",
+             "cond":"量縮反彈至38.2%~61.8%壓力位","risk":"⚠️ 此反彈不宜追多，等c浪底部"},
+            {"name":"📊 次要劇本（25%）：b浪強勁，可能跳過c浪直接⑤浪","color":"#fbbf24",
+             "desc":"若b浪量增過前高，可能是④浪已完成，直接啟動⑤浪。","cond":"量增，b浪突破前高","risk":"⚠️ 需確認後才追"},
+        ]},
+    "4-c": {"color":"#a78bfa","label":"④浪修正末端（c子浪）","emoji":"🪤","desc":"④浪c子浪，接近底部等待⑤浪啟動",
+        "scenarios":[
+            {"name":"✅ 主要劇本（65%）：c浪見底 → 啟動⑤浪主攻","color":"#4ade80",
+             "desc":"c浪是④浪最後一段下跌，通常在0.382~0.618費波支撐見底。KD低位金叉+量縮後帶量長紅=⑤浪啟動訊號，是最佳布局點。",
+             "cond":"量縮後帶量長紅K，KD<30金叉，守住費波0.382","risk":"⚠️ 停損設c浪低點"},
+            {"name":"📊 次要劇本（25%）：c浪延伸，多測一個費波支撐","color":"#fbbf24",
+             "desc":"c浪比預期更深，測到0.618費波才見底，但最終⑤浪仍會啟動。","cond":"量繼續縮，慢慢探低","risk":"⚠️ 等量縮止跌再進場"},
+            {"name":"❌ 風險劇本（10%）：整個五浪結構結束，進入熊市A浪","color":"#f87171",
+             "desc":"若跌破①浪高點且帶量，整個五浪主升已完成，下方是更大級別ABC熊市修正。",
+             "cond":"帶量跌破①浪高點","risk":"🛑 全部出場"},
+        ]},
+    "C-3": {"color":"#f87171","label":"ABC修正的C浪（主跌段）","emoji":"🔻","desc":"空頭C浪主跌，避免抄底",
+        "scenarios":[
+            {"name":"✅ 主要劇本（65%）：C浪繼續下跌，目標A浪的1倍~1.618倍","color":"#f87171",
+             "desc":"C浪通常等於A浪長度，或A浪的1.618倍。目前處於主跌段中段，量增下跌，不宜做多，等量縮止跌訊號。",
+             "cond":"量增下跌，均線空頭排列","risk":"🛑 多單全數出清，等止跌"},
+            {"name":"📊 次要劇本（25%）：提前完成C浪，量縮背離出現底部","color":"#fbbf24",
+             "desc":"若出現量縮+KD低位背離+帶量長紅，C浪可能提前完成。","cond":"量縮，KD低位背離，帶量長紅K","risk":"⚠️ 確認後輕倉試多"},
+        ]},
+    "C-5": {"color":"#dc2626","label":"C浪末段趕底","emoji":"💥","desc":"恐慌殺盤，極端超跌接近尾聲",
+        "scenarios":[
+            {"name":"✅ 主要劇本（55%）：趕底後強力反彈，新一輪五浪上升即將開始","color":"#fbbf24",
+             "desc":"趕底急殺後通常有強力反彈，若配合量縮止跌K棒（長下影、十字星）可輕倉布局，停損設當日低點。",
+             "cond":"量縮後爆量長紅，KD極低位回升","risk":"⚠️ 輕倉試做，嚴設停損"},
+            {"name":"❌ 風險劇本（45%）：超跌延伸繼續探底","color":"#f87171",
+             "desc":"無止跌訊號，繼續破底。","cond":"量增繼續破低","risk":"🛑 勿抄底，等止跌"},
+        ]},
+    "B-a": {"color":"#94a3b8","label":"ABC修正的B浪（反彈）","emoji":"↗️","desc":"空頭格局中的B浪技術反彈",
+        "scenarios":[
+            {"name":"✅ 主要劇本（60%）：B浪反彈至38.2%~61.8%後，C浪繼續下跌","color":"#f87171",
+             "desc":"B浪是ABC修正中的反彈浪，通常反彈至前高（即A浪起點）的38.2%~61.8%後轉弱，之後C浪才是真正底部。",
+             "cond":"量縮反彈，均線仍空頭排列","risk":"⚠️ 此反彈是出貨機會，不宜重倉做多"},
+            {"name":"📊 次要劇本（25%）：B浪強勢，可能是新一波五浪起漲","color":"#4ade80",
+             "desc":"若B浪量增過前高，可能是底部確立，新的五浪上升啟動。","cond":"量增突破前高，KD低位金叉","risk":"⚠️ 突破確認後才考慮做多"},
+        ]},
+    "B-c": {"color":"#ef4444","label":"B浪的c子浪（反彈高點）","emoji":"⚠️","desc":"B浪反彈最高點，C浪即將展開",
+        "scenarios":[
+            {"name":"✅ 主要劇本（70%）：B浪反彈完成，C主跌浪即將展開","color":"#f87171",
+             "desc":"B浪c子浪為反彈最高點，此後C主跌浪展開，空頭格局最終底部才在C浪。這是減倉逃命的最後機會。",
+             "cond":"KD高位死叉，量縮，MACD翻綠","risk":"🛑 多單清倉，不在此追高"},
+            {"name":"📊 次要劇本（30%）：突破前高，空頭結束多頭確立","color":"#4ade80",
+             "desc":"若放量突破A浪起點（前高），ABC修正結束，新的五浪多頭開始。","cond":"量增突破前高，所有均線翻多","risk":"⚠️ 確認後才進場，設好停損"},
+        ]},
+    "N/A": {"color":"#64748b","label":"波浪判斷中","emoji":"❓","desc":"資料不足，無法判斷","scenarios":[]},
 }
 
 def get_wave_info(label):
@@ -98,35 +131,18 @@ def get_wave_info(label):
 
 
 # ─────────────────────────────────────────
-# 高低點偵測
+# 轉折點偵測
 # ─────────────────────────────────────────
-def _find_pivots(df, order=5):
-    """
-    找轉折高低點
-    回傳 pivots: [(index_pos, price, 'H'/'L'), ...]
-    """
-    closes = df["Close"].values
-    highs  = df["High"].values
-    lows   = df["Low"].values
-
+def _find_pivots(highs, lows, order):
     hi_idx = argrelextrema(highs, np.greater_equal, order=order)[0]
     lo_idx = argrelextrema(lows,  np.less_equal,    order=order)[0]
-
-    pivots = []
-    for i in hi_idx:
-        pivots.append((i, highs[i], "H"))
-    for i in lo_idx:
-        pivots.append((i, lows[i], "L"))
-
+    pivots = [(i, highs[i], "H") for i in hi_idx] + [(i, lows[i], "L") for i in lo_idx]
     pivots.sort(key=lambda x: x[0])
-
-    # 去重：相鄰同型留最極值
+    # 去重同型取極值
     clean = []
     for p in pivots:
         if clean and clean[-1][2] == p[2]:
-            if p[2] == "H" and p[1] >= clean[-1][1]:
-                clean[-1] = p
-            elif p[2] == "L" and p[1] <= clean[-1][1]:
+            if (p[2]=="H" and p[1]>=clean[-1][1]) or (p[2]=="L" and p[1]<=clean[-1][1]):
                 clean[-1] = p
         else:
             clean.append(p)
@@ -134,113 +150,120 @@ def _find_pivots(df, order=5):
 
 
 # ─────────────────────────────────────────
-# 波浪計數（簡化版艾略特）
+# 判斷大趨勢（多頭/空頭/修正）
 # ─────────────────────────────────────────
-def _count_waves(pivots, trend="bull"):
-    """
-    從轉折點序列嘗試標示艾略特波浪
-    回傳 labels: [(index_pos, price, label_text, color), ...]
-    """
-    if len(pivots) < 3:
-        return []
-
-    labels = []
-
-    # 多頭浪計數：L→H→L→H→L→H = 1-2-3-4-5
-    # 空頭浪計數：H→L→H→L→H→L = A-B-C
-    bull_labels = ["①","②","③","④","⑤","⓪"]
-    bear_labels = ["Ⓐ","Ⓑ","Ⓒ"]
-    sub_labels  = ["ⅰ","ⅱ","ⅲ","ⅳ","ⅴ"]
-
-    bull_colors = {
-        "①":"#38bdf8","②":"#f97316","③":"#4ade80",
-        "④":"#fb923c","⑤":"#fbbf24","⓪":"#94a3b8",
-    }
-    bear_colors = {"Ⓐ":"#f87171","Ⓑ":"#fb923c","Ⓒ":"#dc2626"}
-
-    # 找最近一個低點作為起浪點
-    # 取最後 min(11, len) 個轉折點
-    recent = pivots[-min(12, len(pivots)):]
-
-    # 判斷多空：若低點在左高點在右 → 多頭
-    if len(recent) >= 2:
-        is_bull = recent[-1][2] == "H" or (
-            recent[-1][2] == "L" and
-            recent[-2][2] == "H" and
-            recent[-1][1] > recent[0][1]
-        )
+def _detect_macro_trend(df):
+    """根據均線排列和近期走勢判斷大方向"""
+    if len(df) < 60:
+        return "bull"
+    last = df.iloc[-1]
+    ma20 = last.get("MA20", last["Close"])
+    ma60 = last.get("MA60", last["Close"])
+    close = float(last["Close"])
+    if close > float(ma20) > float(ma60):
+        return "bull"
+    elif close < float(ma20) < float(ma60):
+        return "bear"
     else:
-        is_bull = trend == "bull"
-
-    if is_bull:
-        # 多頭：找最近的低→高→低→高→低→高序列
-        wave_n = 0
-        prev_type = None
-        for pos, price, ptype in recent:
-            if wave_n == 0 and ptype == "L":
-                labels.append((pos, price, "起", "#64748b"))
-                wave_n = 1
-                prev_type = "L"
-            elif wave_n <= 5 and ptype != prev_type:
-                if wave_n < len(bull_labels):
-                    lbl = bull_labels[wave_n - 1]
-                    labels.append((pos, price, lbl, bull_colors.get(lbl,"#94a3b8")))
-                wave_n += 1
-                prev_type = ptype
-    else:
-        # 空頭/修正：A-B-C
-        wave_n = 0
-        prev_type = None
-        for pos, price, ptype in recent:
-            if wave_n == 0 and ptype == "H":
-                labels.append((pos, price, "頂", "#f87171"))
-                wave_n = 1
-                prev_type = "H"
-            elif wave_n <= 3 and ptype != prev_type:
-                if wave_n - 1 < len(bear_labels):
-                    lbl = bear_labels[wave_n - 1]
-                    labels.append((pos, price, lbl, bear_colors.get(lbl,"#f87171")))
-                wave_n += 1
-                prev_type = ptype
-
-    return labels
+        return "mixed"
 
 
 # ─────────────────────────────────────────
-# 主繪圖函式
+# 波浪計數（大浪）
 # ─────────────────────────────────────────
+BULL_MAIN = ["①","②","③","④","⑤"]
+BEAR_MAIN = ["Ⓐ","Ⓑ","Ⓒ"]
+BULL_COLORS = {"①":"#38bdf8","②":"#fb923c","③":"#4ade80","④":"#f97316","⑤":"#fbbf24"}
+BEAR_COLORS = {"Ⓐ":"#f87171","Ⓑ":"#fb923c","Ⓒ":"#dc2626"}
+
+# 子浪
+BULL_SUB = ["ⅰ","ⅱ","ⅲ","ⅳ","ⅴ"]
+BEAR_SUB = ["a","b","c"]
+BULL_SUB_C = {"ⅰ":"#7dd3fc","ⅱ":"#fed7aa","ⅲ":"#86efac","ⅳ":"#fdba74","ⅴ":"#fde68a"}
+BEAR_SUB_C = {"a":"#fca5a5","b":"#fdba74","c":"#f87171"}
+
+
+def _label_waves(pivots, labels_list, colors_dict, start_type):
+    """從轉折點列表標示波浪"""
+    result = []
+    wave_n = 0
+    prev_type = None
+    started = False
+    for pos, price, ptype in pivots:
+        if not started:
+            if ptype == start_type:
+                result.append((pos, price, "●", "#64748b", ptype))
+                started = True
+                prev_type = ptype
+            continue
+        if ptype != prev_type and wave_n < len(labels_list):
+            lbl = labels_list[wave_n]
+            result.append((pos, price, lbl, colors_dict.get(lbl,"#94a3b8"), ptype))
+            wave_n += 1
+            prev_type = ptype
+    return result
+
+
 def build_kline_chart(df, wave_label_d, stock_name="", code=""):
     if not PLOTLY_OK or df is None or len(df) < 20:
         return None
 
-    from scipy.signal import argrelextrema as _are
-
-    df = df.copy()
-    # 取近 120 日
-    df = df.iloc[-120:].copy()
-    df = df.reset_index()
-    # index 欄位可能叫 Date 或 Datetime
+    df = df.copy().iloc[-150:].reset_index()
     date_col = "Date" if "Date" in df.columns else df.columns[0]
-
-    wave  = get_wave_info(wave_label_d)
-    wcolor = wave["color"]
-
-    fig = make_subplots(
-        rows=2, cols=1,
-        shared_xaxes=True,
-        row_heights=[0.72, 0.28],
-        vertical_spacing=0.02,
-        subplot_titles=("", ""),
-    )
-
-    x_idx = list(range(len(df)))  # 用整數 index 避免時區問題
     x_dates = df[date_col].astype(str).tolist()
+    n = len(df)
+
+    wave    = get_wave_info(wave_label_d)
+    wcolor  = wave["color"]
+    trend   = _detect_macro_trend(df)
+
+    highs = df["High"].values.astype(float)
+    lows  = df["Low"].values.astype(float)
+
+    # ── 大浪轉折點（較大 order）──
+    big_order = max(8, n // 15)
+    try:
+        big_pivots = _find_pivots(highs, lows, big_order)
+    except Exception:
+        big_pivots = []
+
+    # ── 子浪轉折點（較小 order，只看最後一段大浪）──
+    sub_order = max(3, n // 40)
+    # 找最後一個大浪起點
+    last_big_start = 0
+    if len(big_pivots) >= 2:
+        last_big_start = big_pivots[-2][0]
+    sub_df_start = max(0, last_big_start - 2)
+
+    sub_highs = highs[sub_df_start:]
+    sub_lows  = lows[sub_df_start:]
+    try:
+        sub_pivots_raw = _find_pivots(sub_highs, sub_lows, sub_order)
+        sub_pivots = [(p[0] + sub_df_start, p[1], p[2]) for p in sub_pivots_raw]
+    except Exception:
+        sub_pivots = []
+
+    # ── 判斷大浪標示方式 ──
+    is_bull_major = trend in ("bull","mixed") and wave_label_d.startswith(("3","4"))
+    if is_bull_major:
+        main_labels = _label_waves(big_pivots[-12:], BULL_MAIN, BULL_COLORS, "L")
+        sub_labels  = _label_waves(sub_pivots[-10:], BULL_SUB,  BULL_SUB_C,  "L")
+    else:
+        main_labels = _label_waves(big_pivots[-12:], BEAR_MAIN, BEAR_COLORS, "H")
+        sub_labels  = _label_waves(sub_pivots[-10:], BEAR_SUB,  BEAR_SUB_C,  "H")
+
+    # ─────────────────────────────────────────
+    # 繪圖
+    # ─────────────────────────────────────────
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True,
+        row_heights=[0.72, 0.28], vertical_spacing=0.02,
+    )
 
     # ── K線 ──
     fig.add_trace(go.Candlestick(
         x=x_dates,
-        open=df["Open"], high=df["High"],
-        low=df["Low"],   close=df["Close"],
+        open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
         increasing=dict(line=dict(color="#4ade80",width=1), fillcolor="rgba(74,222,128,0.85)"),
         decreasing=dict(line=dict(color="#f87171",width=1), fillcolor="rgba(248,113,113,0.85)"),
         name="K線", whiskerwidth=0.3,
@@ -248,85 +271,91 @@ def build_kline_chart(df, wave_label_d, stock_name="", code=""):
 
     # ── 均線 ──
     for ma, col, w in [(5,"#f97316",1.5),(20,"#38bdf8",1.5),(60,"#a78bfa",1.5)]:
-        col_n = f"MA{ma}"
-        if col_n in df.columns:
-            s = df[col_n].dropna()
+        cname = f"MA{ma}"
+        if cname in df.columns:
+            s = df[cname].dropna()
             if len(s):
                 fig.add_trace(go.Scatter(
-                    x=[x_dates[i] for i in s.index],
-                    y=s.values,
-                    mode="lines",
-                    line=dict(color=col, width=w),
+                    x=[x_dates[i] for i in s.index], y=s.values,
+                    mode="lines", line=dict(color=col, width=w),
                     name=f"{ma}MA", opacity=0.9,
                 ), row=1, col=1)
 
-    # ── 偵測高低點 ──
-    try:
-        pivots = _find_pivots(df, order=max(3, len(df)//25))
-    except Exception:
-        pivots = []
-
-    # ── 波浪連線 ──
-    if len(pivots) >= 2:
-        px = [x_dates[p[0]] for p in pivots if p[0] < len(x_dates)]
-        py = [p[1] for p in pivots if p[0] < len(x_dates)]
+    # ── 大浪連線 ──
+    if len(big_pivots) >= 2:
+        bpx = [x_dates[p[0]] for p in big_pivots if p[0] < n]
+        bpy = [p[1] for p in big_pivots if p[0] < n]
         fig.add_trace(go.Scatter(
-            x=px, y=py,
-            mode="lines",
-            line=dict(color="rgba(148,163,184,0.35)", width=1.2, dash="dot"),
-            name="波浪連線", showlegend=False,
+            x=bpx, y=bpy, mode="lines",
+            line=dict(color="rgba(148,163,184,0.4)", width=1.5, dash="dot"),
+            name="大浪連線", showlegend=False,
         ), row=1, col=1)
 
-    # ── 波浪計數標注 ──
-    trend_now = "bull" if wave_label_d.startswith(("3","4")) else "bear"
-    wave_labels = _count_waves(pivots, trend_now)
+    # ── 子浪連線（只在最後一段）──
+    sp_in_range = [(p[0],p[1],p[2]) for p in sub_pivots if sub_df_start <= p[0] < n]
+    if len(sp_in_range) >= 2:
+        spx = [x_dates[p[0]] for p in sp_in_range]
+        spy = [p[1] for p in sp_in_range]
+        fig.add_trace(go.Scatter(
+            x=spx, y=spy, mode="lines",
+            line=dict(color="rgba(255,255,255,0.15)", width=1, dash="dashdot"),
+            name="子浪連線", showlegend=False,
+        ), row=1, col=1)
 
-    for pos, price, lbl, lbl_color in wave_labels:
-        if pos >= len(x_dates):
-            continue
-        is_high = any(p[0]==pos and p[2]=="H" for p in pivots)
-        ay = -30 if is_high else 30
+    # ── 標注大浪 ──
+    for pos, price, lbl, lbl_color, ptype in main_labels:
+        if pos >= n: continue
+        is_hi = (ptype == "H")
+        ay = -45 if is_hi else 45
         fig.add_annotation(
-            x=x_dates[pos],
-            y=price,
+            x=x_dates[pos], y=price,
             text=f"<b>{lbl}</b>",
-            showarrow=True,
-            arrowhead=2,
-            arrowsize=0.8,
-            arrowwidth=1.5,
-            arrowcolor=lbl_color,
+            showarrow=True, arrowhead=2, arrowsize=0.9,
+            arrowwidth=2, arrowcolor=lbl_color,
             ax=0, ay=ay,
-            font=dict(size=14, color=lbl_color, family="Outfit"),
-            bgcolor="rgba(6,11,24,0.75)",
-            bordercolor=lbl_color,
-            borderwidth=1,
-            borderpad=4,
+            font=dict(size=15, color=lbl_color, family="Outfit"),
+            bgcolor="rgba(6,11,24,0.85)",
+            bordercolor=lbl_color, borderwidth=1.5, borderpad=5,
+        )
+
+    # ── 標注子浪（稍小字體，偏移避免重疊）──
+    for pos, price, lbl, lbl_color, ptype in sub_labels:
+        if pos >= n: continue
+        if lbl == "●": continue  # 起始點不標
+        is_hi = (ptype == "H")
+        # 子浪往反方向偏移，避免和大浪重疊
+        ay = -28 if is_hi else 28
+        ax = 18
+        fig.add_annotation(
+            x=x_dates[pos], y=price,
+            text=f"<i>{lbl}</i>",
+            showarrow=True, arrowhead=1, arrowsize=0.7,
+            arrowwidth=1.2, arrowcolor=lbl_color,
+            ax=ax, ay=ay,
+            font=dict(size=12, color=lbl_color, family="Outfit"),
+            bgcolor="rgba(6,11,24,0.7)",
+            bordercolor=lbl_color, borderwidth=1, borderpad=3,
+            opacity=0.85,
         )
 
     # ── 當前波浪標注（最後一根K棒）──
-    last_x     = x_dates[-1]
-    last_high  = float(df["High"].iloc[-1])
+    last_x    = x_dates[-1]
+    last_high = float(df["High"].iloc[-1])
     fig.add_annotation(
-        x=last_x,
-        y=last_high * 1.022,
+        x=last_x, y=last_high * 1.025,
         text=f"  {wave['emoji']} {wave['label']}",
-        showarrow=True,
-        arrowhead=2,
-        arrowsize=1.3,
-        arrowcolor=wcolor,
-        arrowwidth=2,
-        ax=0, ay=-40,
+        showarrow=True, arrowhead=2, arrowsize=1.3,
+        arrowwidth=2.5, arrowcolor=wcolor,
+        ax=0, ay=-50,
         font=dict(size=13, color=wcolor, family="Outfit"),
-        bgcolor="rgba(6,11,24,0.88)",
-        bordercolor=wcolor,
-        borderwidth=1.5,
-        borderpad=6,
+        bgcolor="rgba(6,11,24,0.9)",
+        bordercolor=wcolor, borderwidth=2, borderpad=7,
     )
 
     # ── 成交量 ──
     vol_colors = [
-        "rgba(74,222,128,0.55)" if float(c) >= float(o) else "rgba(248,113,113,0.55)"
-        for c, o in zip(df["Close"], df["Open"])
+        "rgba(74,222,128,0.55)" if float(c)>=float(o) else "rgba(248,113,113,0.55)"
+        for c,o in zip(df["Close"],df["Open"])
     ]
     fig.add_trace(go.Bar(
         x=x_dates, y=df["Volume"],
@@ -337,39 +366,34 @@ def build_kline_chart(df, wave_label_d, stock_name="", code=""):
     if "VOL_MA5" in df.columns:
         vm = df["VOL_MA5"].dropna()
         fig.add_trace(go.Scatter(
-            x=[x_dates[i] for i in vm.index],
-            y=vm.values,
-            mode="lines",
-            line=dict(color="#fbbf24", width=1.2),
+            x=[x_dates[i] for i in vm.index], y=vm.values,
+            mode="lines", line=dict(color="#fbbf24", width=1.2),
             name="量5MA",
         ), row=2, col=1)
 
-    # ── 版面 ──
-    title_str = (f"{stock_name}（{code}）日K線 ｜ 當前波浪：{wave['emoji']} {wave['label']}"
-                 f" — {wave['desc']}")
+    # ── 說明文字 ──
+    # 取最後標注到的大浪 + 子浪
+    last_main = main_labels[-1][2] if main_labels else "?"
+    last_sub  = sub_labels[-1][2]  if sub_labels  else "?"
+    pos_text = f"大浪位置：{last_main}  |  子浪位置：{last_sub}" if last_sub != "?" else f"大浪位置：{last_main}"
+
+    title_str = (f"{stock_name}（{code}）日K線  ｜  當前：{wave['emoji']} {wave['label']}"
+                 f"  ｜  {pos_text}")
+
     fig.update_layout(
-        title=dict(text=title_str, font=dict(size=13,color="#94a3b8",family="Outfit"), x=0),
+        title=dict(text=title_str, font=dict(size=12,color="#94a3b8",family="Outfit"), x=0),
         paper_bgcolor="rgba(6,11,24,0)",
         plot_bgcolor ="rgba(6,11,24,0)",
         xaxis_rangeslider_visible=False,
-        legend=dict(
-            orientation="h", x=0, y=1.03,
-            font=dict(size=11,color="#64748b"),
-            bgcolor="rgba(0,0,0,0)",
-        ),
-        margin=dict(l=0,r=0,t=48,b=0),
-        height=520,
+        legend=dict(orientation="h",x=0,y=1.04,font=dict(size=11,color="#64748b"),bgcolor="rgba(0,0,0,0)"),
+        margin=dict(l=0,r=0,t=52,b=0),
+        height=540,
         font=dict(family="Outfit"),
         hovermode="x unified",
     )
-    axis_style = dict(
-        gridcolor="rgba(255,255,255,0.05)",
-        showgrid=True, zeroline=False,
-        color="#475569",
-        tickfont=dict(size=11,family="JetBrains Mono"),
+    axis_s = dict(
+        gridcolor="rgba(255,255,255,0.05)", showgrid=True, zeroline=False,
+        color="#475569", tickfont=dict(size=11,family="JetBrains Mono"),
     )
-    fig.update_layout(
-        xaxis=axis_style,  xaxis2=axis_style,
-        yaxis=axis_style,  yaxis2=axis_style,
-    )
+    fig.update_layout(xaxis=axis_s, xaxis2=axis_s, yaxis=axis_s, yaxis2=axis_s)
     return fig
