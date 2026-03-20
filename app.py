@@ -16,6 +16,8 @@ try:    import broker as bk; BROKER_READY = True
 except: BROKER_READY = False
 try:    import wave_chart as wc; WC_READY = True
 except: WC_READY = False
+try:    import global_market as gm; GM_READY = True
+except: GM_READY = False
 
 # ── API Keys ──
 def _secret(key):
@@ -762,6 +764,66 @@ with tab_ana:
             </div>""",unsafe_allow_html=True)
 
         st.caption(f"更新：{datetime.now().strftime('%Y-%m-%d %H:%M')} ｜ AI Stock Bot V3.1")
+
+        # ── 全球市場情報 ──
+        st.markdown("---")
+        st.markdown("## 🌍 全球市場情報")
+        if GM_READY:
+            with st.spinner("載入全球市場情報..."):
+                gm_data = gm.get_full_global_report(cc)
+            ind_info = gm_data["industry_info"]
+            st.caption(f"偵測產業：{ind_info.get('name','—')}  ｜  以下顯示相關指數、個股及最新情報")
+
+            # 相關美股 ETF
+            etf_data = gm_data["us_etf_data"]
+            if etf_data:
+                st.markdown("#### 📊 相關美股 ETF")
+                ecols = st.columns(min(len(etf_data),4))
+                for i,d in enumerate(etf_data):
+                    ecols[i%4].metric(d["name"], f"{d['price']}", f"{d['direction']}{d['pct']:+.2f}%")
+
+            # 相關美股個股
+            us_stocks = gm_data["us_stock_data"]
+            if us_stocks:
+                st.markdown("#### 🇺🇸 相關美股個股")
+                scols = st.columns(min(len(us_stocks),5))
+                for i,d in enumerate(us_stocks):
+                    scols[i%5].metric(f"{d['name']}({d['ticker']})", f"{d['price']}", f"{d['direction']}{d['pct']:+.2f}%")
+
+            # 全球相關個股
+            global_stocks = gm_data["global_data"]
+            if global_stocks:
+                st.markdown("#### 🌏 全球相關個股")
+                gcols = st.columns(min(len(global_stocks),4))
+                for i,d in enumerate(global_stocks):
+                    gcols[i%4].metric(f"{d['name']}", f"{d['price']}", f"{d['direction']}{d['pct']:+.2f}%")
+
+            # 產業新聞
+            ind_news = gm_data["industry_news"]
+            if ind_news:
+                st.markdown("#### 📰 相關產業新聞")
+                for n in ind_news[:5]:
+                    nc1,nc2 = st.columns([1,8])
+                    nc1.markdown(n["sentiment"])
+                    nc2.markdown(f"[{n['title']}]({n['url']})  `{n['time']}`")
+
+            # Trump Truth Social
+            trump_posts = gm_data["trump_posts"]
+            with st.expander("🇺🇸 Trump Truth Social 最新發文", expanded=True):
+                if trump_posts:
+                    for p in trump_posts:
+                        st.markdown(f"""
+                        <div style='background:rgba(255,255,255,0.04);border-left:3px solid #f97316;
+                             border-radius:8px;padding:12px 16px;margin-bottom:10px'>
+                            <div style='font-size:13px;color:#e2e8f0;line-height:1.7'>{p["text"]}</div>
+                            <div style='font-size:11px;color:#64748b;margin-top:6px'>
+                                ⏰ {p["time"]}
+                                {"&nbsp;&nbsp;<a href='" + p["url"] + "' target='_blank' style='color:#38bdf8'>查看原文</a>" if p["url"] else ""}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.caption("目前無法取得 Trump Truth Social 資料")
 
         # ── AI 報告書 ──
         st.markdown("---")
