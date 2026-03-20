@@ -476,28 +476,41 @@ def get_quick_price(code):
 # TAB 1：個股分析
 # ════════════════════════════════════════
 with tab_ana:
-    # 取得用戶觀察名單當下拉選項
     _my_codes = db.get_user_watchlist_codes(user["username"])
     _wl_map   = db.get_global_watchlist() if _my_codes else {}
-    _wl_opts  = {f"{c} {_wl_map.get(c,c)}": c for c in _my_codes}
 
-    if _wl_opts:
-        sel_col, inp_col = st.columns([2,3])
-        with sel_col:
-            st.markdown("<span style='font-size:12px;color:#64748b'>📋 從觀察名單選擇</span>",unsafe_allow_html=True)
-            wl_sel = st.selectbox("", ["（手動輸入）"] + list(_wl_opts.keys()),
+    # 若從觀察名單跳轉過來，預填代號
+    _jump = st.session_state.pop("_jump_code","")
+
+    if _my_codes:
+        _opts = ["手動輸入..."] + [f"{c}  {_wl_map.get(c,c)}" for c in _my_codes]
+        sc1,sc2,sc3 = st.columns([2,2,1])
+        with sc1:
+            st.markdown("<span style='font-size:12px;color:#64748b;letter-spacing:.5px'>📋 從觀察名單快選</span>",unsafe_allow_html=True)
+            wl_sel = st.selectbox("","" , options=_opts,
                                   label_visibility="collapsed", key="wl_sel")
-        with inp_col:
-            st.markdown("<span style='font-size:12px;color:#64748b'>或直接輸入代號</span>",unsafe_allow_html=True)
-            _default = _wl_opts.get(wl_sel,"2330") if wl_sel != "（手動輸入）" else "2330"
-            si = st.text_input("", _default, placeholder="輸入股票代號，如 2330",
+        with sc2:
+            st.markdown("<span style='font-size:12px;color:#64748b;letter-spacing:.5px'>或輸入代號</span>",unsafe_allow_html=True)
+            # 從下拉選取時自動填入，跳轉也自動填入
+            _pre = ""
+            if wl_sel and wl_sel != "手動輸入...":
+                _pre = wl_sel.split()[0]
+            if _jump:
+                _pre = _jump
+            si = st.text_input("", value=_pre or "2330",
+                               placeholder="如 2330",
                                label_visibility="collapsed", key="ana_in")
+        with sc3:
+            st.markdown("<span style='font-size:12px;color:#64748b'>&nbsp;</span>",unsafe_allow_html=True)
+            run_btn = st.button("🚀 分析", type="primary", use_container_width=True)
     else:
-        si=st.text_input("","2330",placeholder="輸入股票代號，如 2330",label_visibility="collapsed",key="ana_in")
+        c1,c2,c3 = st.columns([3,1,1])
+        with c1: si=st.text_input("","2330",placeholder="輸入股票代號，如 2330",label_visibility="collapsed",key="ana_in")
+        with c2: run_btn=st.button("🚀 分析",type="primary",use_container_width=True)
 
-    c2,c3=st.columns([1,2])
-    with c2: run_btn=st.button("🚀 分析",type="primary",use_container_width=True)
-    with c3: add_wl=st.button("➕ 加入觀察名單",use_container_width=True,key="ana_wl")
+    add_wl = st.button("➕ 加入觀察名單",use_container_width=False,key="ana_wl")
+    # 自動分析：從下拉選單選了非手動 → 直接觸發
+    _auto_run = (wl_sel if _my_codes else "") not in ("","手動輸入...")
 
     if add_wl and si:
         cc2=si.strip().replace(".TW","").replace(".TWO","")
@@ -506,7 +519,7 @@ with tab_ana:
         st.success(f"✅ {nm2}（{cc2}）已加入觀察名單")
 
     # 分析按下 → 計算並存入 session_state
-    if run_btn:
+    if run_btn or _auto_run:
         cc=si.strip().replace(".TW","").replace(".TWO","")
         with st.spinner(f"載入 {cc} 所有數據..."):
             df_d,df_60,df_30,cc=fetch_stock(cc)
@@ -628,11 +641,35 @@ with tab_ana:
         cw1.info(f"📅 日線波浪\n\n## {w_d}")
         cw2.warning(f"⏰ 60分鐘\n\n## {w_60}")
         cw3.error(f"⚡ 30分鐘\n\n## {w_30}")
-        cd=df_d[["Close","MA5","MA20","MA60"]].iloc[-60:].dropna()
-        if not cd.empty:
-            st.markdown("#### 📈 近60日走勢 + 均線")
-            st.line_chart(cd,color=["#38bdf8","#f97316","#4ade80","#a78bfa"])
-            st.caption("藍:收盤 ｜ 橙:5MA ｜ 綠:20MA ｜ 紫:60MA")
+        if WC_READY and wc.PLOTLY_OK:
+            st.markdown("#### 📊 日K線圖 + 波浪標注")
+            _fig = wc.build_kline_chart(df_d, w_d, nm, cc)
+            if _fig:
+                st.plotly_chart(_fig, use_container_width=True, config={"displayModeBar":False})
+        else:
+            _cd = df_d[["Close","MA5","MA20","MA60"]].iloc[-60:].dropna()
+            if not _cd.empty:
+                st.line_chart(_cd, color=["#38bdf8","#f97316","#4ade80","#a78bfa"])
+        if WC_READY:
+            _wi = wc.get_wave_info(w_d)
+            st.markdown("---")
+            st.markdown(f"#### {_wi['emoji']} 波浪劇本分析 — {_wi['label']}")
+            st.caption(_wi['desc'])
+            for _sc in _wi.get("scenarios", []):
+                _sc_c = _sc["color"]
+                try: _r,_g,_b=int(_sc_c[1:3],16),int(_sc_c[3:5],16),int(_sc_c[5:7],16); _bg=f"rgba({_r},{_g},{_b},0.07)"
+                except: _bg="rgba(255,255,255,0.05)"
+                st.markdown(
+                    f"<div style='background:{_bg};border-left:3px solid {_sc_c};border-radius:10px;padding:14px 18px;margin-bottom:10px'>"
+                    f"<div style='font-size:14px;font-weight:700;color:{_sc_c};margin-bottom:6px'>{_sc['name']}</div>"
+                    f"<div style='font-size:13px;color:#cbd5e1;line-height:1.8'>{_sc['desc']}</div>"
+                    f"<div style='margin-top:8px;font-size:12px;display:flex;gap:12px;flex-wrap:wrap'>"
+                    f"<span style='background:rgba(255,255,255,0.05);padding:4px 10px;border-radius:6px;color:#94a3b8'>"
+                    f"✅ {_sc['cond']}</span>"
+                    f"<span style='background:rgba(239,68,68,0.08);padding:4px 10px;border-radius:6px;color:#fca5a5'>"
+                    f"{_sc['risk']}</span></div></div>",
+                    unsafe_allow_html=True
+                )
 
         # ── 費波 + 布林 ──
         st.markdown("---")
@@ -985,17 +1022,23 @@ with tab_wl:
         for h,t_ in zip([hd1,hd2,hd3,hd4,hd5],["代號","名稱","現價","目標價","操作"]):
             h.markdown(f"<span style='font-size:11px;color:#475569;letter-spacing:.8px;text-transform:uppercase'>{t_}</span>",unsafe_allow_html=True)
         for code in my_codes:
-            nm_w=wl_map.get(code,code)
-            my_tgt_e=db.get_user_target(user["username"],code)
-            tgt_txt=f"🎯 {my_tgt_e['target_price']:.2f}" if my_tgt_e else "—"
-            price_n,_=get_quick_price(code)
-            price_txt=f"{price_n:.2f}" if price_n else "—"
-            cl1,cl2,cl3,cl4,cl5=st.columns([1,2,1.5,2,1])
+            nm_w    = wl_map.get(code, code)
+            my_tgt_e= db.get_user_target(user["username"], code)
+            tgt_txt = f"🎯 {my_tgt_e['target_price']:.2f}" if my_tgt_e else "—"
+            price_n, _ = get_quick_price(code)
+            price_txt  = f"{price_n:.2f}" if price_n else "—"
+            cl1,cl2,cl3,cl4,cl5,cl6 = st.columns([1,2,1.2,1.8,1.5,1])
             cl1.markdown(f"<span style='font-family:JetBrains Mono;font-weight:700;color:#38bdf8'>{code}</span>",unsafe_allow_html=True)
             cl2.write(nm_w); cl3.write(price_txt); cl4.caption(tgt_txt)
             with cl5:
-                if st.button("🗑️",key=f"rwl_{code}",use_container_width=True):
-                    db.remove_from_watchlist(user["username"],code); st.success(f"已移除"); st.rerun()
+                if st.button(f"📊 分析", key=f"ana_wl_{code}", use_container_width=True):
+                    st.session_state["_jump_code"] = code
+                    st.session_state.stock_data = None  # 清除舊資料，強制重新分析
+                    st.rerun()
+            with cl6:
+                if st.button("🗑️", key=f"rwl_{code}", use_container_width=True):
+                    db.remove_from_watchlist(user["username"], code)
+                    st.success(f"已移除"); st.rerun()
 
 # ════════════════════════════════════════
 # TAB 4：帳號設定
