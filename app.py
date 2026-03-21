@@ -52,37 +52,61 @@ class _BKModule:
     def get_broker_data(self, code):
         c = code.strip().replace(".TW","").replace(".TWO","")
         for dt in _bk_dates():
-            url = f"https://www.twse.com.tw/fund/T86?response=json&date={dt}&stockNo={c}"
-            try:
-                r = requests.get(url, headers=_BK_HDR, timeout=15)
-                if r.status_code != 200: continue
-                j = r.json()
-                if j.get("stat") != "OK": continue
-                rows = j.get("data") or []
-                if not rows or len(rows[0]) < 5: continue
-                # 驗證 row[0] 必須是4碼數字（券商代號）
-                if not str(rows[0][0]).strip().isdigit(): continue
-                brokers = []
-                for row in rows:
-                    if len(row) < 5: continue
-                    name = _bk_fmt(str(row[1]).strip())
-                    buy  = _bk_lots(row[2])
-                    sell = _bk_lots(row[3])
-                    net  = buy - sell
-                    brokers.append({"name":name,"buy":buy,"sell":sell,"net":net})
-                if not brokers: continue
-                brokers.sort(key=lambda x: x["net"], reverse=True)
-                return {
-                    "error": None, "date": dt,
-                    "net_total": sum(b["net"] for b in brokers),
-                    "buy_brokers":  [b for b in brokers if b["net"]>0][:10],
-                    "sell_brokers": [b for b in brokers if b["net"]<0][-10:][::-1],
-                }
-            except Exception: continue
-        return {"error":f"查無 {c} 券商資料","buy_brokers":[],"sell_brokers":[],"net_total":0}
+            # 嘗試多個 URL 格式
+            for url in [
+                f"https://www.twse.com.tw/fund/T86?response=json&date={dt}&stockNo={c}",
+                f"https://www.twse.com.tw/pcversion/zh/fund/T86?response=json&date={dt}&stockNo={c}",
+            ]:
+                try:
+                    r = requests.get(url, headers=_BK_HDR, timeout=15)
+                    if r.status_code != 200: continue
+                    j = r.json()
+                    if j.get("stat") != "OK": continue
+
+                    # ── 關鍵驗證：確認 fields 是券商相關欄位 ──
+                    fields = j.get("fields", [])
+                    fields_str = "".join(str(f) for f in fields)
+                    # T86 正確的 fields 應包含「券商」字樣
+                    if fields and "券商" not in fields_str:
+                        continue  # 不是券商資料表，跳過
+
+                    rows = j.get("data") or []
+                    if not rows or len(rows[0]) < 5: continue
+
+                    # 額外驗證：row[0] 是4碼數字（券商代號如1020）
+                    sample = str(rows[0][0]).strip()
+                    if not (sample.isdigit() and len(sample) == 4):
+                        continue
+
+                    brokers = []
+                    for row in rows:
+                        if len(row) < 5: continue
+                        name = _bk_fmt(str(row[1]).strip())
+                        buy  = _bk_lots(row[2])
+                        sell = _bk_lots(row[3])
+                        net  = buy - sell
+                        brokers.append({"name":name,"buy":buy,"sell":sell,"net":net})
+                    if not brokers: continue
+                    brokers.sort(key=lambda x: x["net"], reverse=True)
+                    return {
+                        "error": None, "date": dt,
+                        "net_total": sum(b["net"] for b in brokers),
+                        "buy_brokers":  [b for b in brokers if b["net"]>0][:10],
+                        "sell_brokers": [b for b in brokers if b["net"]<0][-10:][::-1],
+                    }
+                except Exception: continue
+        return {"error":f"⚠️ 查無 {c} 券商資料（TWSE 非交易日或上櫃股票）",
+                "buy_brokers":[],"sell_brokers":[],"net_total":0}
 
     def get_institutional(self, code):
         c = code.strip().replace(".TW","").replace(".TWO","")
+        # TWT38U 欄位（依 TWSE 官方）：
+        # [0]日期 [1]代號 [2]名稱
+        # [3]外資買  [4]外資賣  [5]外資買賣超  ← 用 index 5
+        # [6]投信買  [7]投信賣  [8]投信買賣超  ← 用 index 8
+        # [9]自營買(自) [10]自營賣(自) [11]自營超(自)
+        # [12]自營買(避) [13]自營賣(避) [14]自營超(避)
+        # [15]三大合計
         for dt in _bk_dates():
             try:
                 url = f"https://www.twse.com.tw/fund/TWT38U?response=json&date={dt}&stockNo={c}"
@@ -90,16 +114,68 @@ class _BKModule:
                 if r.status_code != 200: continue
                 j = r.json()
                 if j.get("stat") != "OK" or not j.get("data"): continue
-                row = j["data"][0]
+
+                # 驗證 fields 含「外資」
+                fields = j.get("fields","")
+                if fields and "外資" not in str(fields): continue
+
+                rows = j.get("data")
+                # 找到對應我們股票的那行（row[1] 或 row[2] 含股票代號）
+                target_row = None
+                for row in rows:
+                    if any(str(c) in str(cell) for cell in row[:3]):
+                        target_row = row
+                        break
+                if target_row is None:
+                    target_row = rows[0]  # fallback 第一行
+
+                row = target_row
                 if len(row) < 10: continue
+
                 foreign = _bk_lots(row[5])  if len(row)>5  else 0
                 trust   = _bk_lots(row[8])  if len(row)>8  else 0
                 d_self  = _bk_lots(row[11]) if len(row)>11 else 0
                 d_hedge = _bk_lots(row[14]) if len(row)>14 else 0
                 dealer  = d_self + d_hedge
                 total   = _bk_lots(row[15]) if len(row)>15 else foreign+trust+dealer
+
+                # 外資和自營數字完全相同通常代表解析錯誤
+                if foreign == dealer and foreign != 0:
+                    # 可能欄位位移，嘗試不同offset
+                    foreign2 = _bk_lots(row[3]) if len(row)>3 else 0
+                    trust2   = _bk_lots(row[6]) if len(row)>6 else 0
+                    dealer2  = _bk_lots(row[9]) if len(row)>9 else 0
+                    if foreign2 != dealer2:
+                        foreign, trust, dealer = foreign2, trust2, dealer2
+                        total = foreign + trust + dealer
+
                 if foreign==0 and trust==0 and dealer==0: continue
-                return {"error":None,"date":dt,"foreign":foreign,"trust":trust,"dealer":dealer,"total":total}
+                return {"error":None,"date":dt,
+                        "foreign":foreign,"trust":trust,"dealer":dealer,"total":total}
+            except Exception: continue
+
+        # fallback: 使用其他 endpoint
+        for dt in _bk_dates():
+            try:
+                url = f"https://www.twse.com.tw/fund/MI_QFIIS?response=json&date={dt}&stockNo={c}"
+                r = requests.get(url, headers=_BK_HDR, timeout=12)
+                if r.status_code != 200: continue
+                j = r.json()
+                if j.get("stat") != "OK" or not j.get("data"): continue
+                row = j["data"][0]
+                if len(row) < 8: continue
+                # MI_QFIIS 欄位不同，差異在較後面
+                for offset in range(0, 5):
+                    try:
+                        foreign = _bk_lots(row[4+offset])
+                        trust   = _bk_lots(row[7+offset])
+                        dealer  = _bk_lots(row[10+offset]) if len(row)>10+offset else 0
+                        if foreign != dealer or foreign == 0:
+                            if foreign != 0 or trust != 0:
+                                return {"error":None,"date":dt,
+                                        "foreign":foreign,"trust":trust,"dealer":dealer,
+                                        "total":foreign+trust+dealer}
+                    except: continue
             except Exception: continue
         return {"error":"三大法人資料暫無","foreign":0,"trust":0,"dealer":0,"total":0}
 
