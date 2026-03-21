@@ -985,28 +985,75 @@ with tab_tgt:
         with t3c: tc_note =st.text_input("投資備註",placeholder="如：法說會前布局",key="tn",label_visibility="collapsed")
         with t4c: tc_btn  =st.button("💾 儲存",type="primary",use_container_width=True,key="ts")
 
+    # session state 管理確認流程
+    if "confirm_target" not in st.session_state:
+        st.session_state.confirm_target = False
+
     if tc_btn and tc_code and tc_price_str:
         try:
             tc_price = float(tc_price_str.replace(",","").strip())
         except:
             st.error("❌ 請輸入有效的目標價數字，如 60.00"); st.stop()
-        code_in=tc_code.strip().replace(".TW","").replace(".TWO","")
-        nm_in=fetch_name(code_in)
-        ok=db.set_target(user["username"],user["display_name"],code_in,tc_price,tc_note)
-        if ok:
-            st.success(f"✅ 已設定 {nm_in}（{code_in}）目標價 {tc_price:.2f}")
-            chat_id=user.get("telegram_chat_id","") or tg_chat_secret
-            if chat_id:
-                msg=(f"🎯 <b>目標價設定通知</b>\n\n"
-                     f"<b>{nm_in}（{code_in}）</b>\n"
-                     f"💰 目標價：<b>{tc_price:.2f}</b> 元\n"
-                     f"📝 備註：{tc_note or '—'}\n"
-                     f"👤 設定者：{user['display_name']}\n"
-                     f"<i>⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}</i>")
-                send_tg(msg, chat_id)
+        # 先設定待確認狀態，不直接儲存
+        st.session_state.confirm_target = True
+        st.session_state._pending_code  = tc_code.strip().replace(".TW","").replace(".TWO","")
+        st.session_state._pending_price = tc_price
+        st.session_state._pending_note  = tc_note
+
+    # 確認對話框
+    if st.session_state.confirm_target:
+        _pc = st.session_state.get("_pending_code","")
+        _pp = st.session_state.get("_pending_price",0)
+        _pn = st.session_state.get("_pending_note","")
+        st.markdown(f"""
+        <div style='background:rgba(251,191,36,0.1);border:2px solid rgba(251,191,36,0.5);
+             border-radius:16px;padding:24px 28px;margin:16px 0;animation:fadeUp .3s ease both'>
+            <div style='font-size:18px;font-weight:800;color:#fbbf24;margin-bottom:12px'>
+                ⚠️ 確認目標價設定
+            </div>
+            <div style='font-size:14px;color:#e2e8f0;line-height:2;margin-bottom:16px'>
+                你即將設定 <b style='color:#38bdf8'>{_pc}</b> 的目標價為
+                <b style='color:#fbbf24;font-size:18px'> {_pp:.2f} </b> 元<br>
+                <span style='color:#f87171;font-size:13px'>
+                    📌 請確認目標價來源的準確性。<br>
+                    目標價將直接影響以下分析結果的正確性：<br>
+                    &nbsp;&nbsp;• 投資計畫書 · 買賣策略分級<br>
+                    &nbsp;&nbsp;• 達標時間預估 · 四種劇本推演<br>
+                    &nbsp;&nbsp;• 費波那契壓力支撐計算<br>
+                    建議來源：法人報告、技術分析高點、前波壓力位等可驗證的資訊。
+                </span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        _cfm_col1, _cfm_col2, _cfm_col3 = st.columns([2,1,1])
+        with _cfm_col2:
+            _confirm_yes = st.button("✅ 確認儲存", type="primary", use_container_width=True, key="cfm_yes")
+        with _cfm_col3:
+            _confirm_no  = st.button("❌ 取消", use_container_width=True, key="cfm_no")
+
+        if _confirm_no:
+            st.session_state.confirm_target = False
             st.rerun()
-        else:
-            st.error("儲存失敗")
+
+        if _confirm_yes:
+            st.session_state.confirm_target = False
+            code_in = _pc; tc_price = _pp; tc_note = _pn
+            nm_in=fetch_name(code_in)
+            ok=db.set_target(user["username"],user["display_name"],code_in,tc_price,tc_note)
+            if ok:
+                st.success(f"✅ 已設定 {nm_in}（{code_in}）目標價 {tc_price:.2f}")
+                chat_id=user.get("telegram_chat_id","") or tg_chat_secret
+                if chat_id:
+                    msg=(f"🎯 <b>目標價設定通知</b>\n\n"
+                         f"<b>{nm_in}（{code_in}）</b>\n"
+                         f"💰 目標價：<b>{tc_price:.2f}</b> 元\n"
+                         f"📝 備註：{tc_note or '—'}\n"
+                         f"👤 設定者：{user['display_name']}\n"
+                         f"<i>⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}</i>")
+                    send_tg(msg, chat_id)
+                st.rerun()
+            else:
+                st.error("儲存失敗")
 
     # ── 沒有目標價 → 引導畫面 ──
     my_tgts=db.get_user_all_targets(user["username"])
