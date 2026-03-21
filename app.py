@@ -12,12 +12,98 @@ import gist_db as db
 
 try:    import ai_report;  AI_READY = True
 except: AI_READY = False
-try:
-    import broker as bk
-    import importlib; importlib.reload(bk)
-    BROKER_READY = True
-    _bk_ver = getattr(bk, 'VERSION', 'unknown')
-except: BROKER_READY = False; _bk_ver = 'not loaded'
+# ── Broker 功能內嵌（不依賴外部 broker.py）──
+import importlib as _il
+BROKER_READY = True
+_bk_ver = "inline-v1"
+
+def _bk_lots(s):
+    try: return int(str(s).replace(",","").replace(" ","").replace("+","")) // 1000
+    except: return 0
+
+def _bk_fmt(raw):
+    _MAINS = ["富邦","凱基","元大","國泰","永豐金","群益","玉山","兆豐","台新","中信",
+              "第一金","合庫","統一","台銀","陽信","遠東","宏遠","日盛","大昌","大展",
+              "摩根大通","美林","高盛","花旗環球","瑞士信貸","德意志","巴克萊",
+              "野村","匯豐","麥格理","大和","瑞銀","法國興業","里昂","渣打","法巴"]
+    s = str(raw).strip()
+    for m in _MAINS:
+        if s.startswith(m) and len(s) > len(m):
+            return f"{m}-{s[len(m):]}"
+    return s
+
+def _bk_dates(n=10):
+    from datetime import datetime, timedelta
+    dates, d = [], datetime.now()
+    while len(dates) < n:
+        if d.weekday() < 5: dates.append(d.strftime("%Y%m%d"))
+        d -= timedelta(days=1)
+    return dates
+
+_BK_HDR = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    "Accept": "application/json",
+    "Referer": "https://www.twse.com.tw/zh/trading/fund/T86.html",
+}
+
+class _BKModule:
+    VERSION = "inline-v1"
+
+    def get_broker_data(self, code):
+        c = code.strip().replace(".TW","").replace(".TWO","")
+        for dt in _bk_dates():
+            url = f"https://www.twse.com.tw/fund/T86?response=json&date={dt}&stockNo={c}"
+            try:
+                r = requests.get(url, headers=_BK_HDR, timeout=15)
+                if r.status_code != 200: continue
+                j = r.json()
+                if j.get("stat") != "OK": continue
+                rows = j.get("data") or []
+                if not rows or len(rows[0]) < 5: continue
+                # 驗證 row[0] 必須是4碼數字（券商代號）
+                if not str(rows[0][0]).strip().isdigit(): continue
+                brokers = []
+                for row in rows:
+                    if len(row) < 5: continue
+                    name = _bk_fmt(str(row[1]).strip())
+                    buy  = _bk_lots(row[2])
+                    sell = _bk_lots(row[3])
+                    net  = buy - sell
+                    brokers.append({"name":name,"buy":buy,"sell":sell,"net":net})
+                if not brokers: continue
+                brokers.sort(key=lambda x: x["net"], reverse=True)
+                return {
+                    "error": None, "date": dt,
+                    "net_total": sum(b["net"] for b in brokers),
+                    "buy_brokers":  [b for b in brokers if b["net"]>0][:10],
+                    "sell_brokers": [b for b in brokers if b["net"]<0][-10:][::-1],
+                }
+            except Exception: continue
+        return {"error":f"查無 {c} 券商資料","buy_brokers":[],"sell_brokers":[],"net_total":0}
+
+    def get_institutional(self, code):
+        c = code.strip().replace(".TW","").replace(".TWO","")
+        for dt in _bk_dates():
+            try:
+                url = f"https://www.twse.com.tw/fund/TWT38U?response=json&date={dt}&stockNo={c}"
+                r = requests.get(url, headers=_BK_HDR, timeout=15)
+                if r.status_code != 200: continue
+                j = r.json()
+                if j.get("stat") != "OK" or not j.get("data"): continue
+                row = j["data"][0]
+                if len(row) < 10: continue
+                foreign = _bk_lots(row[5])  if len(row)>5  else 0
+                trust   = _bk_lots(row[8])  if len(row)>8  else 0
+                d_self  = _bk_lots(row[11]) if len(row)>11 else 0
+                d_hedge = _bk_lots(row[14]) if len(row)>14 else 0
+                dealer  = d_self + d_hedge
+                total   = _bk_lots(row[15]) if len(row)>15 else foreign+trust+dealer
+                if foreign==0 and trust==0 and dealer==0: continue
+                return {"error":None,"date":dt,"foreign":foreign,"trust":trust,"dealer":dealer,"total":total}
+            except Exception: continue
+        return {"error":"三大法人資料暫無","foreign":0,"trust":0,"dealer":0,"total":0}
+
+bk = _BKModule()
 try:    import wave_chart as wc; WC_READY = True
 except: WC_READY = False
 try:    import global_market as gm; GM_READY = True
@@ -786,12 +872,13 @@ with tab_ana:
         # ── 主力券商 ──
         st.markdown("---")
         st.markdown(f"#### 🏦 主力券商進出（當日）  <span style='font-size:10px;color:#475569'>broker {_bk_ver}</span>", unsafe_allow_html=True)
-        if not BROKER_READY:
-            st.caption("⚠️ broker.py 未上傳")
-        else:
-            with st.spinner("載入主力資料..."):
+        with st.spinner("載入主力資料..."):
+            try:
                 bk_data=bk.get_broker_data(cc)
                 inst=bk.get_institutional(cc)
+            except Exception as _e:
+                bk_data={"error":str(_e),"buy_brokers":[],"sell_brokers":[],"net_total":0}
+                inst={"error":str(_e),"foreign":0,"trust":0,"dealer":0,"total":0}
             if bk_data.get("error"):
                 st.markdown(f"<div class='card-sm' style='color:#fbbf24'>{bk_data['error']}</div>",unsafe_allow_html=True)
             else:
