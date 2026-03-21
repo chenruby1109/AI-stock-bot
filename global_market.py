@@ -141,7 +141,7 @@ def get_market_data(tickers_with_name: list) -> list:
     return results
 
 
-def get_trump_posts(max_items: int = 5) -> list:
+def get_trump_posts(max_items: int = 5, extra_keywords: list = None) -> list:
     """
     抓取 Trump 最新言論
     策略1：Truth Social RSS（常被封鎖）
@@ -183,7 +183,8 @@ def get_trump_posts(max_items: int = 5) -> list:
     # 策略2：若策略1失敗，用 Google News 抓 Trump 最新言論新聞
     if not posts:
         try:
-            query = "Trump tariff trade Taiwan semiconductor"
+            base_kws = extra_keywords or []
+            query = "Trump " + " ".join(base_kws[:2]) + " tariff Taiwan" if base_kws else "Trump tariff trade Taiwan semiconductor"
             url = f"https://news.google.com/rss/search?q={requests.utils.quote(query)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
             r = requests.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
             if r.status_code == 200:
@@ -279,7 +280,7 @@ def get_industry_news(keywords: list, max_items: int = 5) -> list:
     return news
 
 
-def get_full_global_report(code: str) -> dict:
+def get_full_global_report(code: str, stock_name: str = "") -> dict:
     """
     一次取得所有全球市場情報
     回傳 {
@@ -293,11 +294,21 @@ def get_full_global_report(code: str) -> dict:
     """
     industry = detect_industry(code)
 
+    # 個股專屬關鍵字（中文名稱 + 代號 + 產業關鍵字）
+    stock_kws = []
+    if stock_name: stock_kws.append(stock_name)
+    if code:       stock_kws.append(code)
+    combined_kws = stock_kws + industry["keywords"][:3]
+
+    # Trump 搜尋也加入個股相關性
+    trump_query_extra = stock_kws[:1] + ["tariff","Taiwan","semiconductor"]
+
     return {
         "industry_info": industry,
         "us_etf_data":   get_market_data(industry["us_etf"]),
         "us_stock_data": get_market_data(industry["us_stocks"]),
         "global_data":   get_market_data(industry["global"]),
-        "trump_posts":   get_trump_posts(max_items=4),
-        "industry_news": get_industry_news(industry["keywords"], max_items=6),
+        "trump_posts":   get_trump_posts(max_items=5, extra_keywords=trump_query_extra),
+        "industry_news": get_industry_news(combined_kws, max_items=8),
+        "stock_news":    get_industry_news(stock_kws + ["台股",code], max_items=5) if stock_kws else [],
     }
