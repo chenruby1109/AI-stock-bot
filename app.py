@@ -1213,11 +1213,39 @@ with tab_tgt:
     # ── 新增目標價 ──
     with st.container(border=True):
         st.markdown("#### ➕ 新增 / 更新目標價")
-        t1c,t2c,t3c,t4c=st.columns([2,1.5,2,1])
-        with t1c: tc_code =st.text_input("股票代碼",placeholder="股票代碼，如 2330",key="tc",label_visibility="collapsed")
-        with t2c: tc_price_str=st.text_input("目標價",placeholder="目標價，如 60.00",key="tp",label_visibility="collapsed")
-        with t3c: tc_note =st.text_input("投資備註",placeholder="如：法說會前布局",key="tn",label_visibility="collapsed")
-        with t4c: tc_btn  =st.button("💾 儲存",type="primary",use_container_width=True,key="ts")
+
+        # 代號 + 備註
+        t_r1c1, t_r1c2 = st.columns([2, 3])
+        with t_r1c1:
+            tc_code = st.text_input("", placeholder="股票代碼，如 2330 或台積電",
+                                    key="tc", label_visibility="collapsed")
+        with t_r1c2:
+            tc_note = st.text_input("", placeholder="📝 投資備註，如：法說會前布局，目標來源：法人報告",
+                                    key="tn", label_visibility="collapsed")
+
+        # 三段目標價
+        st.markdown("<div style='font-size:12px;color:#64748b;margin:8px 0 4px'>設定目標價（可只填一個，填 0 或空白表示未設定）</div>",
+                    unsafe_allow_html=True)
+        tp_c1, tp_c2, tp_c3, tp_c4 = st.columns([1, 1, 1, 1])
+        with tp_c1:
+            tc_short_str = st.text_input("",
+                placeholder="📈 短期目標（1-3個月）",
+                key="tp_short", label_visibility="collapsed")
+        with tp_c2:
+            tc_mid_str = st.text_input("",
+                placeholder="📊 中期目標（3-6個月）",
+                key="tp_mid", label_visibility="collapsed")
+        with tp_c3:
+            tc_long_str = st.text_input("",
+                placeholder="🎯 長期目標（6個月+）",
+                key="tp_long", label_visibility="collapsed")
+        with tp_c4:
+            tc_btn = st.button("💾 儲存", type="primary",
+                               use_container_width=True, key="ts")
+
+        # 向下相容：tc_price_str 取最低非零目標
+        _prices = [tc_short_str, tc_mid_str, tc_long_str]
+        tc_price_str = next((p for p in _prices if p and p.strip() not in ("","0")), "")
 
     # session state 管理確認流程
     if "confirm_target" not in st.session_state:
@@ -1229,16 +1257,37 @@ with tab_tgt:
         except:
             st.error("❌ 請輸入有效的目標價數字，如 60.00"); st.stop()
         # 先設定待確認狀態，不直接儲存
+        def _parse_price(s):
+            try: v=float(str(s).replace(",","").strip()); return v if v>0 else 0.0
+            except: return 0.0
+        _short_val = _parse_price(tc_short_str)
+        _mid_val   = _parse_price(tc_mid_str)
+        _long_val  = _parse_price(tc_long_str)
+        # 主目標 = 最低非零的那個（短>中>長）
+        _main_price = next((v for v in [_short_val,_mid_val,_long_val] if v>0), tc_price)
         st.session_state.confirm_target = True
         st.session_state._pending_code  = tc_code.strip().replace(".TW","").replace(".TWO","")
-        st.session_state._pending_price = tc_price
+        st.session_state._pending_price = _main_price
         st.session_state._pending_note  = tc_note
+        st.session_state._pending_short = _short_val
+        st.session_state._pending_mid   = _mid_val
+        st.session_state._pending_long  = _long_val
 
     # 確認對話框
     if st.session_state.confirm_target:
         _pc = st.session_state.get("_pending_code","")
         _pp = st.session_state.get("_pending_price",0)
         _pn = st.session_state.get("_pending_note","")
+        # 組合三段目標說明
+        _short_v = st.session_state.get("_pending_short", 0)
+        _mid_v   = st.session_state.get("_pending_mid", 0)
+        _long_v  = st.session_state.get("_pending_long", 0)
+        _tgt_lines = []
+        if _short_v > 0: _tgt_lines.append(f"📈 短期目標：<b style='color:#38bdf8'>{_short_v:.2f}</b>（1-3個月）")
+        if _mid_v   > 0: _tgt_lines.append(f"📊 中期目標：<b style='color:#a78bfa'>{_mid_v:.2f}</b>（3-6個月）")
+        if _long_v  > 0: _tgt_lines.append(f"🎯 長期目標：<b style='color:#4ade80'>{_long_v:.2f}</b>（6個月+）")
+        _tgt_html = "<br>".join(_tgt_lines) if _tgt_lines else f"主要目標：<b>{_pp:.2f}</b>"
+
         st.markdown(f"""
         <div style='background:rgba(251,191,36,0.1);border:2px solid rgba(251,191,36,0.5);
              border-radius:16px;padding:24px 28px;margin:16px 0;animation:fadeUp .3s ease both'>
@@ -1246,8 +1295,8 @@ with tab_tgt:
                 ⚠️ 確認目標價設定
             </div>
             <div style='font-size:14px;color:#e2e8f0;line-height:2;margin-bottom:16px'>
-                你即將設定 <b style='color:#38bdf8'>{_pc}</b> 的目標價為
-                <b style='color:#fbbf24;font-size:18px'> {_pp:.2f} </b> 元<br>
+                你即將設定 <b style='color:#38bdf8'>{_pc}</b> 的目標價<br>
+                {_tgt_html}<br>
                 <span style='color:#f87171;font-size:13px'>
                     📌 請確認目標價來源的準確性。<br>
                     目標價將直接影響以下分析結果的正確性：<br>
@@ -1272,8 +1321,12 @@ with tab_tgt:
         if _confirm_yes:
             st.session_state.confirm_target = False
             code_in = _pc; tc_price = _pp; tc_note = _pn
+            _sv = st.session_state.get("_pending_short",0)
+            _mv = st.session_state.get("_pending_mid",0)
+            _lv = st.session_state.get("_pending_long",0)
             nm_in=fetch_name(code_in)
-            ok=db.set_target(user["username"],user["display_name"],code_in,tc_price,tc_note)
+            ok=db.set_target(user["username"],user["display_name"],code_in,tc_price,tc_note,
+                             short_target=_sv, mid_target=_mv, long_target=_lv)
             if ok:
                 st.success(f"✅ 已設定 {nm_in}（{code_in}）目標價 {tc_price:.2f}")
                 chat_id=user.get("telegram_chat_id","") or tg_chat_secret
@@ -1434,13 +1487,56 @@ with tab_tgt:
                 # ────────────────────────────────
                 # 區塊1：現況 + 進度
                 # ────────────────────────────────
-                r1c1, r1c2, r1c3, r1c4 = st.columns(4)
-                r1c1.metric("現價",   f"{price_now:.2f}" if price_now else "—",
-                            f"{'+' if day_pct>0 else ''}{day_pct:.2f}%" if price_now else "")
-                r1c2.metric("目標價",  f"{tgt_price:.2f}")
-                r1c3.metric("差距",    f"{abs(gap):.2f}（{abs(gap_pct):.1f}%）" if price_now else "—")
-                r1c4.metric("預估達標", eta_str if raw_days > 0 else "已達標" if reached else "—",
-                            f"約{raw_days}交易日 / {cal_days}天" if raw_days > 0 else "")
+                # 取三段目標
+                _st = entry.get("short_target", 0) or 0
+                _mt = entry.get("mid_target", 0) or 0
+                _lt = entry.get("long_target", 0) or 0
+                _has_multi = any(v > 0 for v in [_st, _mt, _lt])
+
+                if _has_multi:
+                    # 三段目標顯示
+                    st.markdown("##### 📊 目標進度")
+                    _mc1, _mc2, _mc3, _mc4 = st.columns(4)
+                    _mc1.metric("💰 現價", f"{price_now:.2f}" if price_now else "—",
+                                f"{'+' if day_pct>0 else ''}{day_pct:.2f}%" if price_now else "")
+                    for _col, _val, _lbl, _clr in [
+                        (_mc2, _st, "📈 短期", "#38bdf8"),
+                        (_mc3, _mt, "📊 中期", "#a78bfa"),
+                        (_mc4, _lt, "🎯 長期", "#4ade80"),
+                    ]:
+                        if _val > 0:
+                            _g = (_val - price_now) / price_now * 100 if price_now else 0
+                            _col.metric(_lbl, f"{_val:.2f}",
+                                        f"差 {_g:.1f}%" if _g > 0 else "✅ 已達標")
+                        else:
+                            _col.metric(_lbl, "未設定")
+
+                    # 三段進度條
+                    if price_now:
+                        st.markdown("<div style='margin:12px 0 4px'>", unsafe_allow_html=True)
+                        for _v, _lbl, _clr in [(_st,"短期","#38bdf8"),(_mt,"中期","#a78bfa"),(_lt,"長期","#4ade80")]:
+                            if _v > 0:
+                                _prog = min(100, max(0, price_now / _v * 100))
+                                _g    = max(0, (_v - price_now) / price_now * 100)
+                                st.markdown(
+                                    f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:6px'>"
+                                    f"<span style='font-size:11px;color:{_clr};width:36px'>{_lbl}</span>"
+                                    f"<div style='flex:1;background:rgba(255,255,255,0.08);border-radius:99px;height:7px;overflow:hidden'>"
+                                    f"<div style='height:100%;width:{_prog:.0f}%;background:{_clr};border-radius:99px'></div></div>"
+                                    f"<span style='font-size:11px;color:#64748b;white-space:nowrap'>"
+                                    f"{_v:.2f}  {'✅' if _prog>=100 else f'差{_g:.1f}%'}</span></div>",
+                                    unsafe_allow_html=True
+                                )
+                        st.markdown("</div>", unsafe_allow_html=True)
+                else:
+                    # 單一目標顯示（向下相容）
+                    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+                    r1c1.metric("現價",   f"{price_now:.2f}" if price_now else "—",
+                                f"{'+' if day_pct>0 else ''}{day_pct:.2f}%" if price_now else "")
+                    r1c2.metric("目標價",  f"{tgt_price:.2f}")
+                    r1c3.metric("差距",    f"{abs(gap):.2f}（{abs(gap_pct):.1f}%）" if price_now else "—")
+                    r1c4.metric("預估達標", eta_str if raw_days > 0 else "已達標" if reached else "—",
+                                f"約{raw_days}交易日 / {cal_days}天" if raw_days > 0 else "")
 
                 # 進度條
                 prog_color = sc
