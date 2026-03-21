@@ -1437,45 +1437,34 @@ with tab_tgt:
                     for _sc in _sc_list:
                         _days_str = f"約 {_sc['days']} 交易日" if _sc["days"]>0 else "本波段無法達標"
                         _eta = _eta_str(_sc["days"])
-                        st.markdown(f"""
-                        <div style='background:{_sc["bg"]};border:1px solid {_sc["border"]};
-                             border-left:4px solid {_sc["color"]};border-radius:14px;
-                             padding:18px 22px;margin-bottom:14px'>
-                            <div style='display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px'>
-                                <div>
-                                    <div style='font-size:16px;font-weight:800;color:{_sc["color"]};margin-bottom:4px'>{_sc["name"]}</div>
-                                    <div style='font-size:12px;color:#94a3b8'>觸發：{_sc["trigger"]}</div>
-                                </div>
-                                <div style='text-align:right'>
-                                    <div style='font-size:11px;color:#64748b'>預估時間</div>
-                                    <div style='font-size:15px;font-weight:700;color:#f0f4ff'>{_days_str}</div>
-                                    {f'<div style="font-size:11px;color:#64748b">約 {_eta}</div>' if _eta!="—" else ''}
-                                </div>
-                            </div>
-                            <div style='margin-top:14px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px'>
-                                <div style='background:rgba(255,255,255,0.05);border-radius:10px;padding:10px;text-align:center'>
-                                    <div style='font-size:10px;color:#64748b;margin-bottom:4px'>{_sc["t1l"]}</div>
-                                    <div style='font-size:16px;font-weight:800;color:{_sc["color"]}'>{_sc["t1"]:.2f}</div>
-                                </div>
-                                <div style='background:rgba(255,255,255,0.05);border-radius:10px;padding:10px;text-align:center'>
-                                    <div style='font-size:10px;color:#64748b;margin-bottom:4px'>{_sc["t2l"]}</div>
-                                    <div style='font-size:16px;font-weight:800;color:{_sc["color"]}'>{_sc["t2"]:.2f}</div>
-                                </div>
-                                <div style='background:rgba(239,68,68,0.08);border-radius:10px;padding:10px;text-align:center'>
-                                    <div style='font-size:10px;color:#f87171;margin-bottom:4px'>🛑 停損</div>
-                                    <div style='font-size:16px;font-weight:800;color:#f87171'>{_sc["stop"]:.2f}</div>
-                                </div>
-                                <div style='background:rgba(255,255,255,0.05);border-radius:10px;padding:10px;text-align:center'>
-                                    <div style='font-size:10px;color:#64748b;margin-bottom:4px'>現價</div>
-                                    <div style='font-size:16px;font-weight:800;color:#f0f4ff'>{price_now:.2f}</div>
-                                </div>
-                            </div>
-                            <div style='margin-top:12px;font-size:12px;color:#94a3b8;line-height:1.7'>
-                                📝 {_sc["desc"]}<br>
-                                <span style='color:#f87171'>⚠️ {_sc["risk"]}</span>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        # 標題列
+                        st.markdown(
+                            f"<div style='background:{_sc["bg"]};border:1px solid {_sc["border"]};"
+                            f"border-left:4px solid {_sc["color"]};border-radius:14px 14px 0 0;"
+                            f"padding:14px 18px 10px'>"
+                            f"<span style='font-size:16px;font-weight:800;color:{_sc["color"]}'>{_sc["name"]}</span>"
+                            f"&nbsp;&nbsp;<span style='font-size:12px;color:#94a3b8'>觸發：{_sc["trigger"]}</span>"
+                            f"<span style='float:right;font-size:13px;font-weight:700;color:#f0f4ff'>"
+                            f"{_days_str}{(' (' + _eta + ')') if _eta != '—' else ''}</span>"
+                            f"</div>",
+                            unsafe_allow_html=True
+                        )
+                        # 資料格（st.columns 不會被過濾）
+                        _sg1, _sg2, _sg3, _sg4 = st.columns(4)
+                        _sg1.metric(_sc["t1l"], f"{_sc['t1']:.2f}")
+                        _sg2.metric(_sc["t2l"], f"{_sc['t2']:.2f}")
+                        _sg3.metric("🛑 停損", f"{_sc['stop']:.2f}")
+                        _sg4.metric("現價", f"{price_now:.2f}")
+                        # 說明列
+                        st.markdown(
+                            f"<div style='background:{_sc["bg"]};border:1px solid {_sc["border"]};"
+                            f"border-left:4px solid {_sc["color"]};border-radius:0 0 14px 14px;"
+                            f"padding:10px 18px 14px;margin-bottom:14px'>"
+                            f"<span style='font-size:12px;color:#94a3b8'>📝 {_sc["desc"]}</span><br>"
+                            f"<span style='font-size:12px;color:#f87171'>⚠️ {_sc["risk"]}</span>"
+                            f"</div>",
+                            unsafe_allow_html=True
+                        )
 
                     # 盤中自動刷新
                     import datetime as _dt
