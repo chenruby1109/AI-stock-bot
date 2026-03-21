@@ -817,7 +817,7 @@ with tab_ana:
         st.markdown("## 🌍 全球市場情報")
         if GM_READY:
             with st.spinner("載入全球市場情報..."):
-                gm_data = gm.get_full_global_report(cc)
+                gm_data = gm.get_full_global_report(cc, stock_name=nm)
             ind_info = gm_data["industry_info"]
             st.caption(f"偵測產業：{ind_info.get('name','—')}  ｜  以下顯示相關指數、個股及最新情報")
 
@@ -844,6 +844,15 @@ with tab_ana:
                 gcols = st.columns(min(len(global_stocks),4))
                 for i,d in enumerate(global_stocks):
                     gcols[i%4].metric(f"{d['name']}", f"{d['price']}", f"{d['direction']}{d['pct']:+.2f}%")
+
+            # 個股相關新聞（最優先顯示）
+            stock_news = gm_data.get("stock_news",[])
+            if stock_news:
+                st.markdown(f"#### 🔍 {nm}（{cc}）相關新聞")
+                for n in stock_news[:4]:
+                    nc1,nc2 = st.columns([1,8])
+                    nc1.markdown(n["sentiment"])
+                    nc2.markdown(f"[{n['title']}]({n['url']})  `{n['time']}`")
 
             # 產業新聞
             ind_news = gm_data["industry_news"]
@@ -949,11 +958,15 @@ with tab_tgt:
         st.markdown("#### ➕ 新增 / 更新目標價")
         t1c,t2c,t3c,t4c=st.columns([2,1.5,2,1])
         with t1c: tc_code =st.text_input("股票代號",placeholder="如 2330",key="tc",label_visibility="collapsed")
-        with t2c: tc_price=st.number_input("目標價格",min_value=0.01,step=0.5,format="%.2f",key="tp",label_visibility="collapsed")
+        with t2c: tc_price_str=st.text_input("目標價",placeholder="目標價，如 60.00",key="tp",label_visibility="collapsed")
         with t3c: tc_note =st.text_input("投資備註",placeholder="如：法說會前布局",key="tn",label_visibility="collapsed")
         with t4c: tc_btn  =st.button("💾 儲存",type="primary",use_container_width=True,key="ts")
 
-    if tc_btn and tc_code:
+    if tc_btn and tc_code and tc_price_str:
+        try:
+            tc_price = float(tc_price_str.replace(",","").strip())
+        except:
+            st.error("❌ 請輸入有效的目標價數字，如 60.00"); st.stop()
         code_in=tc_code.strip().replace(".TW","").replace(".TWO","")
         nm_in=fetch_name(code_in)
         ok=db.set_target(user["username"],user["display_name"],code_in,tc_price,tc_note)
