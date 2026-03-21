@@ -17,8 +17,8 @@ weekday = now.weekday()  # 0=週一 ... 4=週五
 TG_TOKEN  = os.environ.get("TG_TOKEN","")
 TG_CHAT_ID= os.environ.get("TG_CHAT_ID","")
 GIST_ID   = os.environ.get("GIST_ID","")
-# GitHub Actions 的 GITHUB_TOKEN 是內建的，用 GITHUB_TOKEN_GIST 避免衝突
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN_GIST", os.environ.get("GITHUB_TOKEN",""))
+# GitHub Actions 的 GITHUB_TOKEN 是內建的，用 GH_TOKEN_GIST 避免衝突
+GITHUB_TOKEN = os.environ.get("GH_TOKEN_GIST", os.environ.get("GITHUB_TOKEN",""))
 GROQ_KEY  = os.environ.get("GROQ_API_KEY","")
 
 # 覆蓋環境變數給 gist_db 使用
