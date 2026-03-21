@@ -649,6 +649,28 @@ with tab_ana:
 
         st.markdown("---")
 
+        # ── 目標價警示（非管理員才顯示）──
+        if not is_admin:
+            _has_tgt = db.get_user_target(user["username"], cc)
+            if not _has_tgt:
+                st.markdown("""
+                <div style='background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.3);
+                     border-left:4px solid #fbbf24;border-radius:12px;padding:14px 18px;margin-bottom:16px'>
+                    <div style='font-size:13px;font-weight:700;color:#fbbf24;margin-bottom:6px'>
+                        💡 想要啟動劇本推演與投資計畫書？
+                    </div>
+                    <div style='font-size:13px;color:#cbd5e1;line-height:1.8'>
+                        前往 <b style='color:#38bdf8'>🎯 目標價</b> Tab 輸入目標價後，系統將自動為你生成：<br>
+                        📋 完整投資計畫書　·　⏰ 預估達標時間　·　💡 買賣策略分級　·　📈 三種劇本推演
+                    </div>
+                    <div style='margin-top:10px;font-size:12px;color:#f87171;background:rgba(239,68,68,0.08);
+                         border-radius:8px;padding:8px 12px'>
+                        ⚠️ <b>請注意</b>：目標價應來自可靠資訊來源（法人報告、技術分析等），
+                        目標價準確度將直接影響整體分析報告與操作判讀。請勿隨意填入未經驗證的數字。
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
         # ── SOP ──
         signal=sop["signal"]
         if signal in ("BUY","SELL"):
@@ -1350,6 +1372,126 @@ with tab_tgt:
                     if _fig:
                         st.plotly_chart(_fig, use_container_width=True,
                                         config={"displayModeBar": False})
+
+                # ── 劇本推演 ──
+                if price_now and df_tmp is not None:
+                    st.markdown("---")
+                    st.markdown("#### 🎬 劇本推演")
+                    st.caption("根據 ATR 波動率與費波那契目標，模擬四種市場情境")
+
+                    _hi = float(df_tmp["High"].iloc[-120:].max()) if len(df_tmp)>=120 else float(df_tmp["High"].max())
+                    _lo = float(df_tmp["Low"].iloc[-120:].min())  if len(df_tmp)>=120 else float(df_tmp["Low"].min())
+                    _fib_ext1 = _lo + (_hi - _lo) * 1.272
+                    _fib_ext2 = _lo + (_hi - _lo) * 1.618
+                    _fib_382  = _hi - (_hi - _lo) * 0.382
+                    _fib_618  = _hi - (_hi - _lo) * 0.618
+
+                    try: df_tmp2,_,_,_=fetch_stock(code); df_tmp2=add_ind(df_tmp2); _atr2=float(df_tmp2["ATR"].iloc[-1])
+                    except: _atr2 = price_now * 0.02
+                    try: _ma20_v=float(df_tmp2["MA20"].iloc[-1]); _ma60_v=float(df_tmp2["MA60"].iloc[-1])
+                    except: _ma20_v=price_now*0.97; _ma60_v=price_now*0.93
+                    _stop = max(_ma60_v*0.98, price_now - _atr2*2)
+
+                    def _eta_str(n):
+                        if n<=0: return "—"
+                        try:
+                            from datetime import timedelta
+                            _tw_now = datetime.now()
+                            count=0; d=_tw_now
+                            tw_hols={(1,1),(2,28),(4,4),(4,5),(5,1),(6,19),(9,28),(10,10)}
+                            while count<n:
+                                d+=timedelta(days=1)
+                                if d.weekday()<5 and (d.month,d.day) not in tw_hols: count+=1
+                            return d.strftime("%m/%d")
+                        except: return "—"
+
+                    _raw_days = max(5,int((tgt_price-price_now)/max(_atr2*0.4,0.01)*2)) if tgt_price>price_now else 0
+
+                    _sc_list = [
+                        {"name":"🚀 樂觀劇本","color":"#4ade80","bg":"rgba(34,197,94,0.07)","border":"rgba(34,197,94,0.3)",
+                         "trigger":"量比>1.5x，MACD紅柱放大，KD多頭持續",
+                         "t1":min(tgt_price,_fib_ext1),"t1l":"目標①","t2":min(tgt_price*1.05,_fib_ext2),"t2l":"延伸目標",
+                         "stop":max(_stop,_fib_618),"days":max(3,int(_raw_days*0.6)) if _raw_days else 10,
+                         "desc":"主力積極買進，突破前高後快速攻目標，量能持續配合，達標後可觀察延伸機會",
+                         "risk":"注意乖離過大後短線回踩，乖離>15%先減碼1/3"},
+                        {"name":"📊 基本劇本","color":"#38bdf8","bg":"rgba(56,189,248,0.07)","border":"rgba(56,189,248,0.3)",
+                         "trigger":"正常量能，KD多頭，MACD正值維持",
+                         "t1":tgt_price,"t1l":"目標價","t2":tgt_price*1.02,"t2l":"超越目標",
+                         "stop":_stop,"days":_raw_days if _raw_days else 20,
+                         "desc":"正常波動推進，途中有短暫修正整理，最終達到目標價，分批獲利了結",
+                         "risk":"途中壓力位可能造成短暫停滯，勿提前出場"},
+                        {"name":"🐢 保守劇本","color":"#fbbf24","bg":"rgba(251,191,36,0.07)","border":"rgba(251,191,36,0.3)",
+                         "trigger":"量縮整理，KD低位，先修正再攻",
+                         "t1":_fib_382,"t1l":"修正目標","t2":tgt_price*0.98,"t2l":"最終目標",
+                         "stop":_fib_618,"days":int(_raw_days*1.6) if _raw_days else 35,
+                         "desc":"先回測38.2%費波支撐整理，KD低位金叉後再啟動第二波攻勢，最終接近目標",
+                         "risk":"若跌破61.8%費波，重新評估整個波段方向"},
+                        {"name":"❌ 風險劇本","color":"#f87171","bg":"rgba(239,68,68,0.06)","border":"rgba(239,68,68,0.25)",
+                         "trigger":"量增下跌，KD死叉，MACD翻綠柱",
+                         "t1":_fib_618,"t1l":"第一支撐","t2":_lo,"t2l":"最終支撐",
+                         "stop":_stop*0.99,"days":0,
+                         "desc":"趨勢轉弱無法達到目標價，需等待底部確認後重新布局，目標價需重新評估",
+                         "risk":"嚴格執行停損，跌破停損立即出場，切勿攤平"},
+                    ]
+
+                    for _sc in _sc_list:
+                        _days_str = f"約 {_sc['days']} 交易日" if _sc["days"]>0 else "本波段無法達標"
+                        _eta = _eta_str(_sc["days"])
+                        st.markdown(f"""
+                        <div style='background:{_sc["bg"]};border:1px solid {_sc["border"]};
+                             border-left:4px solid {_sc["color"]};border-radius:14px;
+                             padding:18px 22px;margin-bottom:14px'>
+                            <div style='display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px'>
+                                <div>
+                                    <div style='font-size:16px;font-weight:800;color:{_sc["color"]};margin-bottom:4px'>{_sc["name"]}</div>
+                                    <div style='font-size:12px;color:#94a3b8'>觸發：{_sc["trigger"]}</div>
+                                </div>
+                                <div style='text-align:right'>
+                                    <div style='font-size:11px;color:#64748b'>預估時間</div>
+                                    <div style='font-size:15px;font-weight:700;color:#f0f4ff'>{_days_str}</div>
+                                    {f'<div style="font-size:11px;color:#64748b">約 {_eta}</div>' if _eta!="—" else ''}
+                                </div>
+                            </div>
+                            <div style='margin-top:14px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px'>
+                                <div style='background:rgba(255,255,255,0.05);border-radius:10px;padding:10px;text-align:center'>
+                                    <div style='font-size:10px;color:#64748b;margin-bottom:4px'>{_sc["t1l"]}</div>
+                                    <div style='font-size:16px;font-weight:800;color:{_sc["color"]}'>{_sc["t1"]:.2f}</div>
+                                </div>
+                                <div style='background:rgba(255,255,255,0.05);border-radius:10px;padding:10px;text-align:center'>
+                                    <div style='font-size:10px;color:#64748b;margin-bottom:4px'>{_sc["t2l"]}</div>
+                                    <div style='font-size:16px;font-weight:800;color:{_sc["color"]}'>{_sc["t2"]:.2f}</div>
+                                </div>
+                                <div style='background:rgba(239,68,68,0.08);border-radius:10px;padding:10px;text-align:center'>
+                                    <div style='font-size:10px;color:#f87171;margin-bottom:4px'>🛑 停損</div>
+                                    <div style='font-size:16px;font-weight:800;color:#f87171'>{_sc["stop"]:.2f}</div>
+                                </div>
+                                <div style='background:rgba(255,255,255,0.05);border-radius:10px;padding:10px;text-align:center'>
+                                    <div style='font-size:10px;color:#64748b;margin-bottom:4px'>現價</div>
+                                    <div style='font-size:16px;font-weight:800;color:#f0f4ff'>{price_now:.2f}</div>
+                                </div>
+                            </div>
+                            <div style='margin-top:12px;font-size:12px;color:#94a3b8;line-height:1.7'>
+                                📝 {_sc["desc"]}<br>
+                                <span style='color:#f87171'>⚠️ {_sc["risk"]}</span>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    # 盤中自動刷新
+                    import datetime as _dt
+                    _tw_now_dt = datetime.utcnow() + timedelta(hours=8)
+                    _tw_h = _tw_now_dt.hour
+                    _is_open = 9 <= _tw_h < 14
+                    if _is_open:
+                        st.markdown("""<div style='background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);
+                             border-radius:10px;padding:10px 16px;text-align:center'>
+                            <span style='color:#4ade80;font-size:13px;font-weight:700'>
+                                🟢 台股開盤中 · 按下刷新取得最新報價</span></div>""",
+                            unsafe_allow_html=True)
+                        if st.button("🔄 刷新現價", key=f"ref_{code}", use_container_width=False):
+                            get_quick_price.clear(); st.rerun()
+                    else:
+                        st.caption(f"⏰ 非開盤時段（台股 09:00-13:30），以上為最後收盤價  |  {_tw_now_dt.strftime('%H:%M')} TW")
 
                 # ── 刪除按鈕 ──
                 st.markdown("---")
