@@ -839,8 +839,15 @@ with tab_ana:
         st.markdown("## 🌍 全球市場情報")
         if GM_READY:
             with st.spinner("載入全球市場情報..."):
-                gm_data = gm.get_full_global_report(cc, stock_name=nm)
-            ind_info = gm_data["industry_info"]
+                try:
+                    gm_data = gm.get_full_global_report(cc, stock_name=nm)
+                except TypeError:
+                    # 舊版 global_market.py 不支援 stock_name 參數
+                    gm_data = gm.get_full_global_report(cc)
+                except Exception as _gm_err:
+                    st.warning(f"全球市場資料載入失敗：{_gm_err}")
+                    gm_data = {}
+            ind_info = gm_data.get("industry_info",{})
             st.caption(f"偵測產業：{ind_info.get('name','—')}  ｜  以下顯示相關指數、個股及最新情報")
 
             # 相關美股 ETF
