@@ -592,3 +592,372 @@ def build_kline_chart(df, df_60=None, wave_label_d="N/A",
               color="#475569",tickfont=dict(size=10,family="JetBrains Mono"))
     fig.update_layout(xaxis=ax.copy(),xaxis2=ax.copy(),yaxis=ax.copy(),yaxis2=ax.copy())
     return fig
+
+
+# ═══════════════════════════════════════════════════════
+# 波浪目標價計算引擎（黃金比例 + 費波那契擴展）
+# ═══════════════════════════════════════════════════════
+
+def calc_wave_targets(result: dict, current_price: float,
+                      user_target: float = 0) -> dict:
+    """
+    根據已計數的波浪結構，計算每個劇本的目標價
+    
+    result: wave_engine 或 _count_elliott_bull 的回傳
+    current_price: 現在收盤價
+    user_target: 用戶設定的目標價（0=未設定）
+    
+    回傳:
+    {
+        "wave_label": str,         # 當前浪位
+        "scenarios": [...],        # 各劇本目標
+        "vs_user_target": {...},   # 與用戶目標比較（若有設定）
+        "key_levels": {...},       # 關鍵支撐壓力
+    }
+    """
+    waves  = result.get("waves", [])
+    current = result.get("current", "?")
+
+    if len(waves) < 2:
+        return {"wave_label": current, "scenarios": [], "vs_user_target": {}, "key_levels": {}}
+
+    # ── 從已計數的波浪提取關鍵價位 ──
+    # 格式：[(idx, price, label), ...]
+    w_prices = {w[2]: w[1] for w in waves}
+
+    # 找起點（①浪起點）
+    w0 = w_prices.get("起", w_prices.get("頂", current_price * 0.7))
+    # ①浪高點、②浪低點等
+    w1 = w_prices.get("①", 0)
+    w2 = w_prices.get("②", 0)
+    w3 = w_prices.get("③", 0)
+    w4 = w_prices.get("④", 0)
+    w5 = w_prices.get("⑤", 0)
+
+    # ── 計算各浪長度 ──
+    len1 = (w1 - w0) if w1 > w0 else 0
+    len3 = (w3 - w2) if w3 > w2 else 0
+
+    scenarios = []
+
+    # ═══════════════════════
+    # 依據當前浪位計算目標
+    # ═══════════════════════
+
+    if current in ("①", "起"):
+        # 在①浪 → 預測②浪修正位 + ③浪目標
+        if len1 > 0 and w1 > 0:
+            s2_382 = w1 - len1 * 0.382
+            s2_618 = w1 - len1 * 0.618
+            s3_target_1618 = w2 + len1 * 1.618 if w2 > 0 else w1 + len1 * 1.618
+            s3_target_2618 = w2 + len1 * 2.618 if w2 > 0 else w1 + len1 * 2.618
+
+            scenarios = [
+                {
+                    "name": "📈 ②浪回測後進場（保守）",
+                    "prob": 65, "color": "#38bdf8",
+                    "target": s3_target_1618,
+                    "entry": s2_618,
+                    "stop":  w0 * 0.99,
+                    "basis": f"①浪漲幅 {len1:.2f}，③浪目標 = ②浪低點 + 1.618 倍",
+                    "desc": f"等②浪回測至 {s2_618:.2f}~{s2_382:.2f} 加碼，③浪目標 {s3_target_1618:.2f}",
+                },
+                {
+                    "name": "🚀 強勢③浪直攻（激進）",
+                    "prob": 25, "color": "#4ade80",
+                    "target": s3_target_2618,
+                    "entry": current_price,
+                    "stop":  w0 * 0.99,
+                    "basis": "③浪 = ①浪 × 2.618 倍（強勢推動浪）",
+                    "desc": f"③浪強力延伸目標 {s3_target_2618:.2f}，需搭配爆量確認",
+                },
+            ]
+
+    elif current in ("②",):
+        # 在②浪修正 → 預測②浪底部 + ③浪目標
+        if len1 > 0 and w1 > 0:
+            bottom_382 = w1 - len1 * 0.382
+            bottom_618 = w1 - len1 * 0.618
+            s3_from_382 = bottom_382 + len1 * 1.618
+            s3_from_618 = bottom_618 + len1 * 1.618
+
+            scenarios = [
+                {
+                    "name": "📊 ②浪38.2%支撐反彈",
+                    "prob": 45, "color": "#fbbf24",
+                    "target": s3_from_382,
+                    "entry": bottom_382,
+                    "stop":  bottom_618 * 0.99,
+                    "basis": "②浪回測38.2%費波支撐後啟動③浪",
+                    "desc": f"②浪支撐 {bottom_382:.2f}，③浪目標 {s3_from_382:.2f}",
+                },
+                {
+                    "name": "🪤 ②浪61.8%深度修正",
+                    "prob": 40, "color": "#a78bfa",
+                    "target": s3_from_618,
+                    "entry": bottom_618,
+                    "stop":  w0 * 0.99,
+                    "basis": "②浪回測61.8%黃金比例後啟動③浪",
+                    "desc": f"②浪支撐 {bottom_618:.2f}，③浪目標 {s3_from_618:.2f}",
+                },
+                {
+                    "name": "❌ ②浪破起漲點，結構失效",
+                    "prob": 15, "color": "#f87171",
+                    "target": w0 * 0.95,
+                    "entry": 0,
+                    "stop":  w0 * 0.99,
+                    "basis": "②浪跌破起漲點，①浪計數錯誤",
+                    "desc": "若跌破起漲點，整個推動浪失效，應出清持股",
+                },
+            ]
+
+    elif current in ("③",):
+        # 在③浪 → 預測③浪目標 + ④浪修正
+        if len1 > 0 and w2 > 0:
+            t3_1618  = w2 + len1 * 1.618
+            t3_2618  = w2 + len1 * 2.618
+            t3_4236  = w2 + len1 * 4.236
+            correction_382 = 0
+            correction_618 = 0
+
+        elif len3 > 0 and w2 > 0:
+            t3_1618  = w2 + len3
+            t3_2618  = w2 + len3 * 1.618
+            t3_4236  = w2 + len3 * 2.618
+        else:
+            t3_1618 = current_price * 1.20
+            t3_2618 = current_price * 1.35
+            t3_4236 = current_price * 1.50
+
+        scenarios = [
+            {
+                "name": "🚀 ③浪主升1.618目標",
+                "prob": 50, "color": "#4ade80",
+                "target": t3_1618,
+                "entry": current_price,
+                "stop":  w2 if w2 > 0 else current_price * 0.92,
+                "basis": "③浪 = ①浪 × 1.618（最常見擴展比例）",
+                "desc": f"③浪第一目標 {t3_1618:.2f}，完成後④浪修正",
+            },
+            {
+                "name": "💥 ③浪延伸2.618目標",
+                "prob": 30, "color": "#38bdf8",
+                "target": t3_2618,
+                "entry": current_price,
+                "stop":  w2 if w2 > 0 else current_price * 0.92,
+                "basis": "③浪強力延伸至2.618倍（牛市加速）",
+                "desc": f"強勢③浪延伸目標 {t3_2618:.2f}，量能需持續放大",
+            },
+            {
+                "name": "⚠️ ③浪提前結束，進④浪修正",
+                "prob": 20, "color": "#f97316",
+                "target": current_price * 1.05,
+                "entry": 0,
+                "stop":  w2 if w2 > 0 else current_price * 0.92,
+                "basis": "量縮價漲背離，③浪可能提前完成",
+                "desc": f"注意量價背離，若出現長上影線可先減碼",
+            },
+        ]
+
+    elif current in ("④",):
+        # 在④浪修正 → 預測④浪底部 + ⑤浪目標
+        if len3 > 0 and w3 > 0:
+            bottom_382 = w3 - len3 * 0.382
+            bottom_618 = w3 - len3 * 0.618
+
+            # ⑤浪通常等於①浪，或①浪的0.618/1.618
+            t5_eq1     = bottom_382 + len1 if len1 > 0 else bottom_382 * 1.15
+            t5_618     = bottom_382 + len1 * 0.618 if len1 > 0 else bottom_382 * 1.10
+            t5_1618    = bottom_382 + len1 * 1.618 if len1 > 0 else bottom_382 * 1.25
+
+            scenarios = [
+                {
+                    "name": "🎯 ④浪38.2%完成→啟動⑤浪",
+                    "prob": 55, "color": "#4ade80",
+                    "target": t5_eq1,
+                    "entry": bottom_382,
+                    "stop":  bottom_618 * 0.99,
+                    "basis": "④浪回測38.2%支撐後，⑤浪=①浪等長",
+                    "desc": f"買點 {bottom_382:.2f}，⑤浪目標 {t5_eq1:.2f}",
+                },
+                {
+                    "name": "📊 ④浪61.8%深修後⑤浪啟動",
+                    "prob": 30, "color": "#fbbf24",
+                    "target": t5_eq1,
+                    "entry": bottom_618,
+                    "stop":  w1 * 1.001 if w1 > 0 else bottom_618 * 0.97,
+                    "basis": "④浪更深修正至61.8%，⑤浪同樣等於①浪",
+                    "desc": f"買點 {bottom_618:.2f}（靠近①高點），⑤浪目標 {t5_eq1:.2f}",
+                },
+                {
+                    "name": "⑤浪延伸強攻",
+                    "prob": 15, "color": "#38bdf8",
+                    "target": t5_1618,
+                    "entry": bottom_382,
+                    "stop":  bottom_618 * 0.99,
+                    "basis": "⑤浪延伸=①浪×1.618（少見但爆發力強）",
+                    "desc": f"若⑤浪量能爆發，延伸目標 {t5_1618:.2f}",
+                },
+            ]
+
+    elif current in ("⑤",):
+        # 在⑤浪末段 → 預測⑤浪頂部 + ABC修正目標
+        wave_start = w4 if w4 > 0 else (w_prices.get("④", current_price * 0.85))
+        full_move  = w3 - w0 if (w3 > 0 and w0 > 0) else current_price * 0.3
+
+        t5_done_618  = wave_start + len1 * 0.618 if len1 > 0 else current_price * 1.05
+        t5_done_eq1  = wave_start + len1 if len1 > 0 else current_price * 1.10
+        t5_done_1618 = wave_start + len1 * 1.618 if len1 > 0 else current_price * 1.20
+
+        # ABC修正：A浪通常跌整個五浪漲幅的38.2~61.8%
+        a_wave_382 = current_price * (1 - 0.382 * (full_move / current_price)) if full_move > 0 else current_price * 0.85
+        a_wave_618 = current_price * (1 - 0.618 * (full_move / current_price)) if full_move > 0 else current_price * 0.75
+
+        scenarios = [
+            {
+                "name": "🏔️ ⑤浪完成（0.618目標），ABC修正即將展開",
+                "prob": 40, "color": "#fbbf24",
+                "target": t5_done_618,
+                "entry": 0,  # 不建議此時買
+                "stop":  wave_start * 0.99,
+                "basis": "⑤浪 = ①浪 × 0.618（衰竭型五浪）",
+                "desc": f"⑤浪目標 {t5_done_618:.2f}，完成後(A)浪修正至 {a_wave_382:.2f}~{a_wave_618:.2f}",
+            },
+            {
+                "name": "📊 ⑤浪等長（①浪等長），完成後修正",
+                "prob": 35, "color": "#f97316",
+                "target": t5_done_eq1,
+                "entry": 0,
+                "stop":  wave_start * 0.99,
+                "basis": "⑤浪 = ①浪等長（最常見）",
+                "desc": f"⑤浪目標 {t5_done_eq1:.2f}，此後A浪跌至 {a_wave_382:.2f}",
+            },
+            {
+                "name": "🚀 ⑤浪延伸（1.618倍），超強牛市",
+                "prob": 15, "color": "#38bdf8",
+                "target": t5_done_1618,
+                "entry": current_price,
+                "stop":  wave_start * 0.99,
+                "basis": "⑤浪延伸 = ①浪 × 1.618（強勢行情才有）",
+                "desc": f"法人持續買超才考慮追，目標 {t5_done_1618:.2f}",
+            },
+            {
+                "name": "❌ 失敗⑤浪，急速回落",
+                "prob": 10, "color": "#f87171",
+                "target": a_wave_618,
+                "entry": 0,
+                "stop":  wave_start * 0.99,
+                "basis": "⑤浪無法突破③浪高點 → 快速轉空",
+                "desc": f"若無法過③浪高 {w3:.2f}，直接下殺至 {a_wave_618:.2f}",
+            },
+        ]
+
+    elif current in ("(A)",):
+        # 在A浪 → 預測A浪底部 + B浪反彈
+        if w3 > 0 and w0 > 0:
+            full = w3 - w0
+            a_target_382 = w3 - full * 0.382
+            a_target_618 = w3 - full * 0.618
+            b_target     = a_target_382 + (w3 - a_target_382) * 0.618
+
+            scenarios = [
+                {
+                    "name": "📉 (A)浪38.2%修正，(B)浪反彈逃命",
+                    "prob": 50, "color": "#f97316",
+                    "target": a_target_382,
+                    "entry": 0,
+                    "stop":  w3 * 1.01,
+                    "basis": "(A)浪跌至整個五浪漲幅38.2%支撐",
+                    "desc": f"(A)浪目標 {a_target_382:.2f}，之後(B)浪反彈至 {b_target:.2f} 是出場機會",
+                },
+                {
+                    "name": "💥 (A)浪61.8%深跌，更大修正",
+                    "prob": 35, "color": "#f87171",
+                    "target": a_target_618,
+                    "entry": 0,
+                    "stop":  w3 * 1.01,
+                    "basis": "(A)浪跌至整個五浪漲幅61.8%（較深修正）",
+                    "desc": f"深度修正至 {a_target_618:.2f}，(B)浪反彈後還有(C)浪",
+                },
+            ]
+
+    # ── 與用戶目標價比較 ──
+    vs_user = {}
+    if user_target > 0 and scenarios:
+        best_match = min(scenarios, key=lambda s: abs(s["target"] - user_target))
+        diff_pct = (user_target - best_match["target"]) / best_match["target"] * 100
+        gap_to_target = (user_target - current_price) / current_price * 100
+
+        if abs(diff_pct) < 5:
+            alignment = "✅ 目標價與波浪計算高度吻合！"
+            alignment_color = "#4ade80"
+        elif abs(diff_pct) < 15:
+            alignment = "📊 目標價與波浪計算接近"
+            alignment_color = "#fbbf24"
+        elif user_target > best_match["target"] * 1.2:
+            alignment = "⚠️ 目標價偏高，超過波浪預測"
+            alignment_color = "#f87171"
+        else:
+            alignment = "📉 目標價偏保守，低於波浪預測"
+            alignment_color = "#94a3b8"
+
+        vs_user = {
+            "user_target":      user_target,
+            "wave_target":      best_match["target"],
+            "diff_pct":         diff_pct,
+            "gap_to_target":    gap_to_target,
+            "alignment":        alignment,
+            "alignment_color":  alignment_color,
+            "best_scenario":    best_match["name"],
+            "entry_suggestion": _get_entry_suggestion(
+                current_price, user_target, best_match, gap_to_target
+            ),
+        }
+
+    # ── 關鍵支撐壓力 ──
+    key_levels = {}
+    if waves:
+        prices = [w[1] for w in waves]
+        key_levels = {
+            "support":    [p for p in prices if p < current_price],
+            "resistance": [p for p in prices if p > current_price],
+        }
+
+    return {
+        "wave_label": current,
+        "scenarios":  scenarios,
+        "vs_user_target": vs_user,
+        "key_levels": key_levels,
+    }
+
+
+def _get_entry_suggestion(current: float, user_target: float,
+                          best_scenario: dict, gap_pct: float) -> str:
+    """根據目前位置 vs 目標，給出進出場建議"""
+    entry = best_scenario.get("entry", 0)
+    stop  = best_scenario.get("stop", 0)
+    tgt   = best_scenario.get("target", 0)
+
+    if gap_pct <= 0:
+        return "🎯 已達目標價！建議分批獲利了結，保留部分待突破確認"
+
+    if gap_pct <= 3:
+        return f"🔥 接近目標！差距僅 {gap_pct:.1f}%，建議設好停利單 {user_target:.2f}，準備出場"
+
+    if gap_pct <= 10:
+        if stop > 0:
+            risk = (current - stop) / current * 100
+            reward = gap_pct
+            rr = reward / risk if risk > 0 else 0
+            return (f"📊 距目標 {gap_pct:.1f}%，波浪支撐 {stop:.2f}，"
+                    f"風險報酬 1:{rr:.1f}，{'✅ 建議持有' if rr >= 2 else '⚠️ 報酬偏低'}")
+        return f"📊 距目標 {gap_pct:.1f}%，建議繼續持有，留意量能變化"
+
+    if entry > 0 and entry < current:
+        return (f"⏳ 距目標 {gap_pct:.1f}%，等回測 {entry:.2f} 再加碼，"
+                f"停損 {stop:.2f}")
+    if entry > 0 and entry > current:
+        return (f"⏳ 距目標 {gap_pct:.1f}%，等突破 {entry:.2f} 再追進，"
+                f"停損 {stop:.2f}")
+
+    return f"📈 距目標 {gap_pct:.1f}%，依原計畫持有，停損 {stop:.2f}"
