@@ -1848,58 +1848,44 @@ with tab_tgt:
                          "risk":"嚴格執行停損，跌破停損立即出場，切勿攤平"},
                     ]
 
+                    # ── 劇本總覽表格（精簡版）──
+                    st.markdown("##### 📋 劇本總覽")
+                    _rows_sc = ""
                     for _sc in _sc_list:
-                        _days_str = f"約 {_sc['days']} 交易日" if _sc["days"]>0 else "本波段無法達標"
                         _eta = _eta_str(_sc["days"])
-                        # 用變數取值，避免 f-string 引號衝突
-                        _bg  = _sc["bg"];   _bd  = _sc["border"]
-                        _cl  = _sc["color"]; _nm = _sc["name"]
-                        _tr  = _sc["trigger"]; _desc = _sc["desc"]; _risk = _sc["risk"]
-                        _t1l = _sc["t1l"]; _t2l = _sc["t2l"]
-                        _t1  = _sc["t1"];  _t2  = _sc["t2"]; _stp = _sc["stop"]
-                        _eta_part = f" ({_eta})" if _eta != "—" else ""
-                        # 標題列
-                        st.markdown(
-                            f"<div style='background:{_bg};border:1px solid {_bd};"
-                            f"border-left:4px solid {_cl};border-radius:14px 14px 0 0;"
-                            f"padding:14px 18px 10px'>"
-                            f"<span style='font-size:16px;font-weight:800;color:{_cl}'>{_nm}</span>"
-                            f"&nbsp;&nbsp;<span style='font-size:12px;color:#94a3b8'>觸發：{_tr}</span>"
-                            f"<span style='float:right;font-size:13px;font-weight:700;color:#f0f4ff'>"
-                            f"{_days_str}{_eta_part}</span></div>",
-                            unsafe_allow_html=True
+                        _days_str = f"約{_sc['days']}日" if _sc["days"]>0 else "本波無法達標"
+                        _eta_txt = f"（{_eta}）" if _eta != "—" else ""
+                        _bg = "rgba(255,255,255,0.03)" if _sc["color"] not in ("#f87171","#dc2626") else "rgba(239,68,68,0.04)"
+                        _rows_sc += (
+                            f"<tr style='border-bottom:1px solid rgba(255,255,255,0.06)'>"
+                            f"<td style='padding:10px 12px;'>"
+                            f"<span style='color:{_sc['color']};font-weight:700;font-size:13px'>{_sc['name']}</span><br>"
+                            f"<span style='font-size:11px;color:#64748b'>{_sc['trigger']}</span>"
+                            f"</td>"
+                            f"<td style='padding:10px 12px;font-size:14px;font-weight:800;color:{_sc['color']};white-space:nowrap'>{_sc['t1']:.2f}</td>"
+                            f"<td style='padding:10px 12px;font-size:13px;color:#f87171;white-space:nowrap'>🛑 {_sc['stop']:.2f}</td>"
+                            f"<td style='padding:10px 12px;font-size:12px;color:#64748b;white-space:nowrap'>{_days_str}{_eta_txt}</td>"
+                            f"</tr>"
+                            f"<tr style='border-bottom:1px solid rgba(255,255,255,0.08);background:{_bg}'>"
+                            f"<td colspan='4' style='padding:6px 12px 10px;font-size:12px;color:#94a3b8'>"
+                            f"📝 {_sc['desc']}&nbsp;&nbsp;"
+                            f"<span style='color:#f87171'>⚠️ {_sc['risk']}</span>"
+                            f"</td></tr>"
                         )
-                        # 資料格
-                        _sg1, _sg2, _sg3, _sg4 = st.columns(4)
-                        _sg1.metric(_t1l, f"{_t1:.2f}")
-                        _sg2.metric(_t2l, f"{_t2:.2f}")
-                        _sg3.metric("🛑 停損", f"{_stp:.2f}")
-                        _sg4.metric("現價", f"{price_now:.2f}")
-                        # 說明列
-                        st.markdown(
-                            f"<div style='background:{_bg};border:1px solid {_bd};"
-                            f"border-left:4px solid {_cl};border-radius:0 0 14px 14px;"
-                            f"padding:10px 18px 14px;margin-bottom:14px'>"
-                            f"<span style='font-size:12px;color:#94a3b8'>📝 {_desc}</span><br>"
-                            f"<span style='color:#f87171'>⚠️ {_risk}</span></div>",
-                            unsafe_allow_html=True
-                        )
-                        # 資料格（st.columns 不會被過濾）
-                        _sg1, _sg2, _sg3, _sg4 = st.columns(4)
-                        _sg1.metric(_sc["t1l"], f"{_sc['t1']:.2f}")
-                        _sg2.metric(_sc["t2l"], f"{_sc['t2']:.2f}")
-                        _sg3.metric("🛑 停損", f"{_sc['stop']:.2f}")
-                        _sg4.metric("現價", f"{price_now:.2f}")
-                        # 說明列（用已提取的變數，避免 f-string 引號衝突）
-                        st.markdown(
-                            f"<div style='background:{_bg};border:1px solid {_bd};"
-                            f"border-left:4px solid {_cl};border-radius:0 0 14px 14px;"
-                            f"padding:10px 18px 14px;margin-bottom:14px'>"
-                            f"<span style='font-size:12px;color:#94a3b8'>📝 {_desc}</span><br>"
-                            f"<span style='font-size:12px;color:#f87171'>⚠️ {_risk}</span>"
-                            f"</div>",
-                            unsafe_allow_html=True
-                        )
+                    st.markdown(
+                        f"<table style='width:100%;border-collapse:collapse;"
+                        f"background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);"
+                        f"border-radius:12px;overflow:hidden'>"
+                        f"<thead><tr style='background:rgba(255,255,255,0.06)'>"
+                        f"<th style='padding:10px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;width:40%'>劇本 / 觸發條件</th>"
+                        f"<th style='padding:10px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600'>目標價①</th>"
+                        f"<th style='padding:10px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600'>停損</th>"
+                        f"<th style='padding:10px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600'>預估時間</th>"
+                        f"</tr></thead>"
+                        f"<tbody>{_rows_sc}</tbody></table>"
+                        f"<div style='font-size:11px;color:#475569;margin-top:6px'>現價 {price_now:.2f}</div>",
+                        unsafe_allow_html=True
+                    )
 
                     # 盤中自動刷新
                     import datetime as _dt
