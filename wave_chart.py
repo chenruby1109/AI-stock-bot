@@ -1009,3 +1009,196 @@ def _get_entry_suggestion(current: float, user_target: float,
                 f"停損 {stop:.2f}")
 
     return f"📈 距目標 {gap_pct:.1f}%，依原計畫持有，停損 {stop:.2f}"
+
+
+# ═══════════════════════════════════════════════════════
+# 費波那契目標價視覺化圖表
+# ═══════════════════════════════════════════════════════
+def build_target_chart(result: dict, current_price: float,
+                       stock_name: str = "", code: str = "",
+                       user_target: float = 0) -> "go.Figure | None":
+    """
+    繪製波浪目標價視覺化：
+    - 水平線顯示各費波那契目標
+    - 現價位置標記
+    - 用戶目標價標記（若有）
+    - 機率圓餅 + 目標距離百分比
+    """
+    if not PLOTLY_OK: return None
+
+    waves   = result.get("waves", [])
+    current = result.get("current", "?")
+    if len(waves) < 2: return None
+
+    w_map = {w[2]: w[1] for w in waves}
+    w0 = w_map.get("起", 0)
+    w1 = w_map.get("①", 0)
+    w2 = w_map.get("②", 0)
+    w3 = w_map.get("③", 0)
+    w4 = w_map.get("④", 0)
+    len1 = (w1 - w0) if w1 > w0 else 0
+    len3 = (w3 - w2) if w3 > w2 else 0
+
+    # ── 計算目標價列表 ──
+    targets = []
+
+    if current == "④" and len1 > 0 and w4 > 0:
+        targets = [
+            {"label": "⑤浪 0.618倍", "price": w4 + len1*0.618, "color": "#94a3b8", "prob": 40, "style": "dash"},
+            {"label": "⑤浪 等長①",   "price": w4 + len1,       "color": "#fbbf24", "prob": 35, "style": "solid"},
+            {"label": "⑤浪 1.618倍", "price": w4 + len1*1.618, "color": "#4ade80", "prob": 15, "style": "dot"},
+            {"label": "④支撐 38.2%", "price": w3 - len3*0.382 if len3>0 else w4, "color": "#fb923c", "prob": 0, "style": "dashdot", "type": "support"},
+            {"label": "④支撐 61.8%", "price": w3 - len3*0.618 if len3>0 else w4*0.97, "color": "#f87171", "prob": 0, "style": "dashdot", "type": "support"},
+        ]
+    elif current == "③" and len1 > 0 and w2 > 0:
+        targets = [
+            {"label": "③浪 1.0倍",   "price": w2 + len1,       "color": "#94a3b8", "prob": 20, "style": "dash"},
+            {"label": "③浪 1.618倍", "price": w2 + len1*1.618, "color": "#4ade80", "prob": 50, "style": "solid"},
+            {"label": "③浪 2.618倍", "price": w2 + len1*2.618, "color": "#38bdf8", "prob": 30, "style": "dot"},
+            {"label": "②支撐 38.2%", "price": w1 - len1*0.382, "color": "#fb923c", "prob": 0, "style": "dashdot", "type": "support"},
+            {"label": "②支撐 61.8%", "price": w1 - len1*0.618, "color": "#f87171", "prob": 0, "style": "dashdot", "type": "support"},
+        ]
+    elif current == "⑤" and w4 > 0 and len1 > 0:
+        targets = [
+            {"label": "⑤浪 0.618倍", "price": w4 + len1*0.618, "color": "#94a3b8", "prob": 40, "style": "dash"},
+            {"label": "⑤浪 等長①",   "price": w4 + len1,       "color": "#fbbf24", "prob": 35, "style": "solid"},
+            {"label": "⑤浪 1.618倍", "price": w4 + len1*1.618, "color": "#4ade80", "prob": 15, "style": "dot"},
+        ]
+    elif current == "②" and len1 > 0 and w1 > 0:
+        targets = [
+            {"label": "②支撐 38.2%", "price": w1 - len1*0.382, "color": "#fbbf24", "prob": 45, "style": "solid", "type": "support"},
+            {"label": "②支撐 50.0%", "price": w1 - len1*0.500, "color": "#f97316", "prob": 20, "style": "dash",  "type": "support"},
+            {"label": "②支撐 61.8%", "price": w1 - len1*0.618, "color": "#f87171", "prob": 35, "style": "dot",   "type": "support"},
+            {"label": "③浪 1.618倍後", "price": (w1 - len1*0.382) + len1*1.618, "color": "#4ade80", "prob": 0, "style": "dashdot"},
+        ]
+    elif current in ("(A)",) and w3 > 0 and w0 > 0:
+        full = w3 - w0
+        targets = [
+            {"label": "(A)浪 23.6%修正", "price": w3 - full*0.236, "color": "#94a3b8", "prob": 15, "style": "dash",    "type": "support"},
+            {"label": "(A)浪 38.2%修正", "price": w3 - full*0.382, "color": "#fbbf24", "prob": 50, "style": "solid",   "type": "support"},
+            {"label": "(A)浪 61.8%修正", "price": w3 - full*0.618, "color": "#f87171", "prob": 35, "style": "dot",     "type": "support"},
+        ]
+
+    if not targets: return None
+
+    # ── 收集所有價格，計算 Y 軸範圍 ──
+    all_prices = [t["price"] for t in targets if t["price"] > 0]
+    all_prices.append(current_price)
+    if user_target > 0: all_prices.append(user_target)
+    y_min = min(all_prices) * 0.94
+    y_max = max(all_prices) * 1.06
+
+    fig = go.Figure()
+
+    # ── 背景色塊：上漲區 / 下跌區 ──
+    up_targets   = [t for t in targets if t["price"] > current_price and t.get("type") != "support"]
+    down_targets = [t for t in targets if t["price"] < current_price or t.get("type") == "support"]
+
+    if up_targets:
+        fig.add_shape(type="rect", x0=0, x1=1, xref="paper",
+            y0=current_price, y1=max(t["price"] for t in up_targets)*1.01,
+            fillcolor="rgba(74,222,128,0.04)",
+            line=dict(width=0))
+    if down_targets and [t for t in down_targets if t["price"] < current_price]:
+        fig.add_shape(type="rect", x0=0, x1=1, xref="paper",
+            y0=min(t["price"] for t in down_targets if t["price"]>0)*0.99, y1=current_price,
+            fillcolor="rgba(239,68,68,0.04)",
+            line=dict(width=0))
+
+    # ── 目標線 ──
+    dash_map = {"solid": "solid", "dash": "dash", "dot": "dot", "dashdot": "dashdot"}
+
+    for t in targets:
+        if t["price"] <= 0: continue
+        pct = (t["price"] - current_price) / current_price * 100
+        direction = "↑" if pct > 0 else "↓"
+        prob_txt  = f"  {t['prob']}%" if t["prob"] > 0 else ""
+        lbl = f"<b>{t['label']}</b>　{t['price']:.2f}　{direction}{abs(pct):.1f}%{prob_txt}"
+
+        fig.add_shape(type="line", x0=0, x1=1, xref="paper",
+            y0=t["price"], y1=t["price"],
+            line=dict(color=t["color"], width=2 if t.get("type")!="support" else 1.2,
+                      dash=dash_map.get(t["style"],"solid")))
+
+        fig.add_annotation(
+            x=0.02, y=t["price"],
+            xref="paper",
+            text=lbl,
+            showarrow=False, xanchor="left",
+            font=dict(size=11, color=t["color"], family="JetBrains Mono"),
+            bgcolor="rgba(6,11,24,0.82)",
+            bordercolor=t["color"], borderwidth=1, borderpad=4,
+        )
+
+    # ── 現價線 ──
+    fig.add_shape(type="line", x0=0, x1=1, xref="paper",
+        y0=current_price, y1=current_price,
+        line=dict(color="#ffffff", width=2.5, dash="solid"))
+    fig.add_annotation(
+        x=0.98, y=current_price,
+        xref="paper",
+        text=f"<b>▶ 現價 {current_price:.2f}</b>",
+        showarrow=False, xanchor="right",
+        font=dict(size=12, color="#ffffff", family="Outfit"),
+        bgcolor="rgba(6,11,24,0.9)",
+        bordercolor="#ffffff", borderwidth=1.5, borderpad=5,
+    )
+
+    # ── 用戶目標價線 ──
+    if user_target > 0:
+        upct = (user_target - current_price) / current_price * 100
+        fig.add_shape(type="line", x0=0, x1=1, xref="paper",
+            y0=user_target, y1=user_target,
+            line=dict(color="#38bdf8", width=2, dash="solid"))
+        fig.add_annotation(
+            x=0.5, y=user_target,
+            xref="paper",
+            text=f"<b>🎯 你的目標 {user_target:.2f}</b>（{upct:+.1f}%）",
+            showarrow=False, xanchor="center",
+            font=dict(size=11, color="#38bdf8", family="Outfit"),
+            bgcolor="rgba(6,11,24,0.88)",
+            bordercolor="#38bdf8", borderwidth=2, borderpad=5,
+        )
+
+    # ── 距離尺（右側）──
+    for t in targets:
+        if t["price"] <= 0 or t.get("type") == "support": continue
+        pct = (t["price"] - current_price) / current_price * 100
+        if pct > 0:
+            # 畫從現價到目標的虛線箭頭
+            fig.add_annotation(
+                x=0.96, y=(t["price"] + current_price) / 2,
+                xref="paper",
+                text=f"+{pct:.1f}%",
+                showarrow=False, xanchor="right",
+                font=dict(size=10, color="#64748b"),
+            )
+
+    # ── 空圖形佔位（讓 go.Figure 有 y 軸）──
+    fig.add_trace(go.Scatter(
+        x=[0, 1], y=[y_min, y_max],
+        mode="markers", marker=dict(opacity=0),
+        showlegend=False, hoverinfo="skip",
+    ))
+
+    # ── 文字說明框 ──
+    wave_emoji = {"④":"🔴","③":"🚀","⑤":"🏔️","②":"📉","(A)":"💥"}.get(current, "📊")
+    title_txt = f"{stock_name}（{code}）  {wave_emoji} 當前浪位：{current}  ｜  費波那契目標價"
+
+    fig.update_layout(
+        title=dict(text=title_txt, font=dict(size=12, color="#e2e8f0", family="Outfit"), x=0),
+        paper_bgcolor="rgba(6,11,24,0)",
+        plot_bgcolor="rgba(6,11,24,0)",
+        height=340,
+        margin=dict(l=0, r=0, t=44, b=10),
+        xaxis=dict(visible=False, range=[0, 1]),
+        yaxis=dict(
+            range=[y_min, y_max],
+            gridcolor="rgba(255,255,255,0.05)",
+            color="#475569",
+            tickfont=dict(size=10, family="JetBrains Mono"),
+            showgrid=True, zeroline=False,
+        ),
+        showlegend=False,
+    )
+    return fig
