@@ -1,52 +1,60 @@
 """
-broker.py V3 — 主力券商分點進出 + 三大法人
-修正：
-  1. T86 券商名稱含分點（如「凱基台北」→ 格式化為「凱基-台北」）
-  2. 三大法人改用 TWT38U endpoint（最準確的個股三大法人 API）
-  3. 所有數值除以 1000 換算為張數
+broker.py V4 — 主力券商分點 + 三大法人
+T86 API 欄位（依 TWSE 官方文件）：
+  fields[0] = 券商代號
+  fields[1] = 券商名稱（含分點，如「凱基台北」）
+  fields[2] = 買進股數
+  fields[3] = 賣出股數
+  fields[4] = 差異股數（買-賣，可能為負）
+
+三大法人 TWT38U 欄位：
+  [0]=日期 [1]=代號 [2]=名稱
+  [3]=外資買進 [4]=外資賣出 [5]=外資買賣超
+  [6]=投信買進 [7]=投信賣出 [8]=投信買賣超
+  [9]=自營買進 [10]=自營賣出 [11]=自營買賣超(自行)
+  [12]=自營買進(避險) [13]=自營賣出(避險) [14]=自營買賣超(避險)
+  [15]=三大法人合計
 """
 import requests
-import re
 from datetime import datetime, timedelta
 
-HDR = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
-
-# ── 主要券商名稱對照（讓分點名稱更易讀）──
-BROKER_SHORT = {
-    "富邦": "富邦", "凱基": "凱基", "元大": "元大", "國泰": "國泰",
-    "永豐金": "永豐金", "群益": "群益", "玉山": "玉山", "兆豐": "兆豐",
-    "台新": "台新", "中信": "中信", "第一金": "第一金", "合庫": "合庫",
-    "統一": "統一", "華南永昌": "華南", "摩根大通": "摩根", "美林": "美林",
-    "瑞士信貸": "瑞信", "高盛": "高盛", "花旗環球": "花旗", "麥格理": "麥格理",
-    "德意志": "德銀", "巴克萊": "巴克萊", "野村": "野村", "匯豐": "匯豐",
+HDR = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://www.twse.com.tw/",
 }
 
-def _fmt_broker(raw_name: str) -> str:
-    """
-    格式化券商分點名稱
-    TWSE T86 回傳格式通常是 「凱基台北」→ 改為 「凱基-台北」
-    外資通常是「美林」「摩根大通」等
-    """
-    raw = str(raw_name).strip()
-    if not raw:
-        return raw
-    # 常見外資直接回傳
-    for k in ["摩根大通","美林","高盛","花旗環球","瑞士信貸","德意志","巴克萊","野村","匯豐","麥格理"]:
-        if k in raw:
-            return raw
-    # 台灣本土券商：嘗試加入分隔符
-    for main, short in BROKER_SHORT.items():
+# 主要券商名稱 → 格式化分點
+BROKER_MAIN = [
+    "富邦","凱基","元大","國泰","永豐金","群益","玉山","兆豐","台新","中信",
+    "第一金","合庫","統一","台銀","陽信","三商","臺灣企銀","遠東","宏遠",
+    "摩根大通","美林","高盛","花旗環球","瑞士信貸","德意志","巴克萊",
+    "野村","匯豐","麥格理","大和","瑞銀","法國興業","里昂","渣打",
+]
+
+def _fmt_broker(raw: str) -> str:
+    """凱基台北 → 凱基-台北"""
+    raw = str(raw).strip()
+    for main in BROKER_MAIN:
         if raw.startswith(main) and len(raw) > len(main):
             branch = raw[len(main):]
-            return f"{short}-{branch}"
-    # 找不到對應就直接回傳
+            # 避免重複加-
+            if not branch.startswith("-"):
+                return f"{main}-{branch}"
     return raw
 
+def _to_lots(s) -> int:
+    """股數字串 → 張數（÷1000，去掉逗號與空格）"""
+    try:
+        v = str(s).replace(",","").replace(" ","").replace("+","").strip()
+        if not v or v in ["-","—","N/A"]: return 0
+        return int(float(v)) // 1000
+    except:
+        return 0
 
-def _recent_dates(n=7):
-    """回傳最近 n 個可能是交易日的日期（跳過週末）"""
-    dates = []
-    d = datetime.now()
+def _recent_dates(n=8):
+    """最近 n 個平日日期"""
+    dates, d = [], datetime.now()
     while len(dates) < n:
         if d.weekday() < 5:
             dates.append(d.strftime("%Y%m%d"))
@@ -54,141 +62,155 @@ def _recent_dates(n=7):
     return dates
 
 
-def _to_lots(s) -> int:
-    """股數字串 → 張數（÷1000）"""
-    try:
-        return int(str(s).replace(",","").replace(" ","").replace("+","")) // 1000
-    except:
-        return 0
-
-
-# ──────────────────────────────────────────
-# 主力券商分點進出（T86）
-# ──────────────────────────────────────────
+# ══════════════════════════════════════
+# 主力券商分點（T86）
+# ══════════════════════════════════════
 def get_broker_data(code: str) -> dict:
-    """
-    T86 API：個股券商進出明細
-    fields: [券商代號, 券商名稱(含分點), 買進股數, 賣出股數, 差異股數]
-    """
-    for d in _recent_dates():
-        for url_tmpl in [
-            f"https://www.twse.com.tw/fund/T86?response=json&date={d}&stockNo={code}",
-            f"https://www.twse.com.tw/pcversion/zh/fund/T86?response=json&date={d}&stockNo={code}",
-        ]:
+    clean = code.strip().replace(".TW","").replace(".TWO","")
+
+    for date_str in _recent_dates():
+        urls = [
+            f"https://www.twse.com.tw/fund/T86?response=json&date={date_str}&stockNo={clean}",
+            f"https://www.twse.com.tw/pcversion/zh/fund/T86?response=json&date={date_str}&stockNo={clean}",
+        ]
+        for url in urls:
             try:
-                r = requests.get(url_tmpl, headers=HDR, timeout=12)
+                r = requests.get(url, headers=HDR, timeout=15)
                 if r.status_code != 200:
                     continue
+
                 j = r.json()
-                if j.get("stat") != "OK" or not j.get("data"):
+                # 確認 API 成功 + 有資料
+                if j.get("stat") != "OK":
+                    continue
+                rows = j.get("data") or []
+                if not rows:
                     continue
 
+                # 驗證第一行確實是券商格式（欄位數至少5個）
+                if len(rows[0]) < 5:
+                    continue
+
+                # 印出前兩行給 debug（只在開發時保留）
+                # print("T86 sample row:", rows[0])
+
                 brokers = []
-                for row in j["data"]:
+                for row in rows:
                     if len(row) < 5:
                         continue
-                    name = _fmt_broker(row[1])
-                    buy  = _to_lots(row[2])
-                    sell = _to_lots(row[3])
-                    net  = buy - sell   # 自行計算，避免原始差異欄位解析錯誤
-                    brokers.append({"name": name, "buy": buy, "sell": sell, "net": net})
+                    broker_name = _fmt_broker(row[1])   # 欄位1 = 券商名稱含分點
+                    buy  = _to_lots(row[2])              # 欄位2 = 買進股數
+                    sell = _to_lots(row[3])              # 欄位3 = 賣出股數
+                    net  = buy - sell                    # 自行計算淨買超（張）
+                    brokers.append({
+                        "name": broker_name,
+                        "buy":  buy,
+                        "sell": sell,
+                        "net":  net,
+                    })
 
                 if not brokers:
                     continue
 
                 brokers.sort(key=lambda x: x["net"], reverse=True)
+                buy_list  = [b for b in brokers if b["net"] > 0][:10]
+                sell_list = [b for b in brokers if b["net"] < 0]
+
                 return {
-                    "error":       None,
-                    "date":        d,
-                    "net_total":   sum(b["net"] for b in brokers),
-                    "buy_brokers": [b for b in brokers if b["net"] > 0][:10],
-                    "sell_brokers":[b for b in brokers if b["net"] < 0][-10:][::-1],
+                    "error":        None,
+                    "date":         date_str,
+                    "net_total":    sum(b["net"] for b in brokers),
+                    "buy_brokers":  buy_list,
+                    "sell_brokers": list(reversed(sell_list))[:10],  # 賣超最多的10家
                 }
-            except Exception:
+            except Exception as e:
                 continue
 
     return {
-        "error":       f"查無 {code} 主力資料（非交易日或為上櫃股票）",
-        "buy_brokers": [], "sell_brokers": [], "net_total": 0,
+        "error":       f"⚠️ 查無 {clean} 券商資料（可能為上櫃股票或非交易日）",
+        "buy_brokers": [],
+        "sell_brokers":[],
+        "net_total":   0,
     }
 
 
-# ──────────────────────────────────────────
-# 三大法人個股買賣超（TWT38U → 最準確）
-# ──────────────────────────────────────────
+# ══════════════════════════════════════
+# 三大法人（TWT38U + MI_QFIIS fallback）
+# ══════════════════════════════════════
 def get_institutional(code: str) -> dict:
-    """
-    TWT38U：三大法人個股買賣超
-    fields: [日期, 股票代號, 股票名稱,
-             外資買進股數, 外資賣出股數, 外資買賣超股數,
-             投信買進股數, 投信賣出股數, 投信買賣超股數,
-             自營商買進股數(自行), 自營商賣出股數(自行), 自營商買賣超股數(自行),
-             自營商買進股數(避險), 自營商賣出股數(避險), 自營商買賣超股數(避險),
-             三大法人買賣超股數]
-    買賣超欄位: 外資[5] 投信[8] 自營[11+14合計] 合計[15]
-    """
-    for d in _recent_dates():
+    clean = code.strip().replace(".TW","").replace(".TWO","")
+
+    # 方法1：TWT38U（最準確）
+    for date_str in _recent_dates():
         try:
             url = (f"https://www.twse.com.tw/fund/TWT38U"
-                   f"?response=json&date={d}&stockNo={code}")
-            r = requests.get(url, headers=HDR, timeout=12)
+                   f"?response=json&date={date_str}&stockNo={clean}")
+            r = requests.get(url, headers=HDR, timeout=15)
             if r.status_code != 200:
                 continue
             j = r.json()
             if j.get("stat") != "OK" or not j.get("data"):
                 continue
-
             row = j["data"][0]
             if len(row) < 10:
                 continue
 
-            # TWT38U 欄位索引（從0開始）
-            # [0]=日期 [1]=代號 [2]=名稱
-            # [3]=外資買進 [4]=外資賣出 [5]=外資買賣超
-            # [6]=投信買進 [7]=投信賣出 [8]=投信買賣超
-            # [9]=自營買進(自行) [10]=自營賣出(自行) [11]=自營買賣超(自行)
-            # [12]=自營買進(避險) [13]=自營賣出(避險) [14]=自營買賣超(避險)
-            # [15]=三大合計
-
+            # 欄位5=外資買賣超, 8=投信買賣超, 11=自營(自行), 14=自營(避險)
             foreign = _to_lots(row[5])  if len(row) > 5  else 0
             trust   = _to_lots(row[8])  if len(row) > 8  else 0
-            dealer1 = _to_lots(row[11]) if len(row) > 11 else 0
-            dealer2 = _to_lots(row[14]) if len(row) > 14 else 0
-            dealer  = dealer1 + dealer2
-            total   = _to_lots(row[15]) if len(row) > 15 else (foreign+trust+dealer)
+            d_self  = _to_lots(row[11]) if len(row) > 11 else 0
+            d_hedge = _to_lots(row[14]) if len(row) > 14 else 0
+            dealer  = d_self + d_hedge
+            total   = _to_lots(row[15]) if len(row) > 15 else foreign+trust+dealer
+
+            if foreign == 0 and trust == 0 and dealer == 0:
+                continue  # 全部為0代表當日沒有資料，試下一天
 
             return {
                 "error":   None,
-                "date":    d,
+                "date":    date_str,
                 "foreign": foreign,
                 "trust":   trust,
                 "dealer":  dealer,
                 "total":   total,
+                "source":  "TWT38U",
             }
         except Exception:
             continue
 
-    # fallback：舊版 MI_QFIIS endpoint
-    for d in _recent_dates():
+    # 方法2：MI_QFIIS fallback
+    for date_str in _recent_dates():
         try:
             url = (f"https://www.twse.com.tw/fund/MI_QFIIS"
-                   f"?response=json&date={d}&stockNo={code}")
-            r = requests.get(url, headers=HDR, timeout=12)
+                   f"?response=json&date={date_str}&stockNo={clean}")
+            r = requests.get(url, headers=HDR, timeout=15)
             if r.status_code != 200: continue
             j = r.json()
             if j.get("stat") != "OK" or not j.get("data"): continue
             row = j["data"][0]
-            # MI_QFIIS 欄位：[日期, ...買進, 賣出, 差異...]
-            # 外資差異通常在 index 4，投信在 7，自營在 10
-            foreign = _to_lots(row[4])  if len(row) > 4  else 0
-            trust   = _to_lots(row[7])  if len(row) > 7  else 0
-            dealer  = _to_lots(row[10]) if len(row) > 10 else 0
+            if len(row) < 8: continue
+
+            # MI_QFIIS 買賣超通常在 index 4, 7, 10
+            foreign = _to_lots(row[4]) if len(row) > 4 else 0
+            trust   = _to_lots(row[7]) if len(row) > 7 else 0
+            dealer  = _to_lots(row[10])if len(row) > 10 else 0
+
+            if foreign == 0 and trust == 0 and dealer == 0:
+                continue
+
             return {
-                "error": None, "date": d,
-                "foreign": foreign, "trust": trust,
-                "dealer": dealer, "total": foreign+trust+dealer,
+                "error":   None,
+                "date":    date_str,
+                "foreign": foreign,
+                "trust":   trust,
+                "dealer":  dealer,
+                "total":   foreign+trust+dealer,
+                "source":  "MI_QFIIS",
             }
         except Exception:
             continue
 
-    return {"error": "三大法人資料暫無", "foreign": 0, "trust": 0, "dealer": 0, "total": 0}
+    return {
+        "error":   "三大法人資料暫無",
+        "foreign": 0, "trust": 0, "dealer": 0, "total": 0,
+    }
