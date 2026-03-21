@@ -409,19 +409,35 @@ def build_kline_chart(df, df_60=None, wave_label_d="N/A",
             opacity=0.82, showlegend=False, hoverinfo="skip",
         ), row=1, col=1)
 
-    for idx, price, lbl in waves:
+    # 動態調整標注位置避免重疊
+    used_positions = []  # 記錄已用的 (x_idx, y_range) 避免重疊
+
+    for i, (idx, price, lbl) in enumerate(waves):
         if idx >= len(x_d): continue
         lc   = WAVE_COLORS.get(lbl, "#94a3b8")
         is_hi= abs(price - H[idx]) < abs(price - L[idx])
-        ay   = -52 if is_hi else 52
+
+        # 基礎偏移：高點往上，低點往下
+        base_ay = -55 if is_hi else 55
+
+        # 如果鄰近標注位置重疊，交錯偏移
+        # 檢查前後2個標注是否 x 位置接近
+        ay = base_ay
+        nearby = [w for j,w in enumerate(waves) if j!=i and abs(w[0]-idx)<8]
+        if nearby:
+            # 如果附近有標注，交替左右偏移
+            ax_offset = -30 if i % 2 == 0 else 30
+        else:
+            ax_offset = 0
+
         price_str = f"{price:.2f}" if price < 1000 else f"{int(price):,}"
         fig.add_annotation(
             x=x_d[idx], y=price,
             text=f"<b>{lbl}</b><br><span style='font-size:10px;font-family:JetBrains Mono'>{price_str}</span>",
             showarrow=True, arrowhead=0,
             arrowwidth=1.5, arrowcolor=lc,
-            ax=0, ay=ay,
-            font=dict(size=14, color=lc, family="Outfit"),
+            ax=ax_offset, ay=ay,
+            font=dict(size=13, color=lc, family="Outfit"),
             bgcolor="rgba(6,11,24,0.88)",
             bordercolor=lc, borderwidth=1.5, borderpad=5,
             align="center", row=1, col=1,
