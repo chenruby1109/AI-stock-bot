@@ -243,27 +243,33 @@ def get_all_users_with_watchlist() -> list[dict]:
 # ════════════════════════════════════════
 
 def set_target(username: str, display_name: str,
-               code: str, price: float, note: str = "") -> bool:
+               code: str, price: float, note: str = "",
+               short_target: float = 0, mid_target: float = 0,
+               long_target: float = 0) -> bool:
+    """
+    設定目標價（支援短期/中期/長期三段目標）
+    price = 主要目標價（向下相容）
+    short/mid/long_target = 三段目標（0 表示未設定）
+    """
     targets = _read("targets")
     code    = code.upper()
     now     = _now()
     entries = targets.setdefault(code, [])
-    # 找已有的 entry 更新
+    update_data = {
+        "target_price": price,
+        "short_target": short_target,
+        "mid_target":   mid_target,
+        "long_target":  long_target,
+        "note":         note.strip(),
+        "display_name": display_name,
+        "updated_at":   now,
+    }
     for e in entries:
         if e["username"] == username:
-            e.update({"target_price": price, "note": note.strip(),
-                      "display_name": display_name, "updated_at": now})
+            e.update(update_data)
             _write("targets", targets)
             return True
-    # 新增
-    entries.append({
-        "username":     username,
-        "display_name": display_name,
-        "target_price": price,
-        "note":         note.strip(),
-        "created_at":   now,
-        "updated_at":   now,
-    })
+    entries.append({"username": username, "created_at": now, **update_data})
     _write("targets", targets)
     return True
 
