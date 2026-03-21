@@ -340,7 +340,7 @@ with st.sidebar:
 _tabs=["📊 個股分析","🎯 目標價","📋 觀察名單","⚙️ 帳號設定"]
 if is_admin: _tabs.append("👑 用戶管理")
 tabs=st.tabs(_tabs)
-tab_ana=tabs[0]; tab_tgt=tabs[1]; tab_wl=tabs[2]; tab_acc=tabs[3]
+tab_tgt=tabs[0]; tab_ana=tabs[1]; tab_wl=tabs[2]; tab_acc=tabs[3]
 tab_admin=tabs[4] if is_admin else None
 
 # ════════════════════════════════════════
@@ -957,7 +957,7 @@ with tab_tgt:
     with st.container(border=True):
         st.markdown("#### ➕ 新增 / 更新目標價")
         t1c,t2c,t3c,t4c=st.columns([2,1.5,2,1])
-        with t1c: tc_code =st.text_input("股票代號",placeholder="如 2330",key="tc",label_visibility="collapsed")
+        with t1c: tc_code =st.text_input("股票代碼",placeholder="股票代碼，如 2330",key="tc",label_visibility="collapsed")
         with t2c: tc_price_str=st.text_input("目標價",placeholder="目標價，如 60.00",key="tp",label_visibility="collapsed")
         with t3c: tc_note =st.text_input("投資備註",placeholder="如：法說會前布局",key="tn",label_visibility="collapsed")
         with t4c: tc_btn  =st.button("💾 儲存",type="primary",use_container_width=True,key="ts")
