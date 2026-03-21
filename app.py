@@ -337,7 +337,7 @@ with st.sidebar:
     if st.button("🚪 登出",use_container_width=True): logout()
 
 # ── Tabs ──
-_tabs=["📊 個股分析","🎯 目標價","📋 觀察名單","⚙️ 帳號設定"]
+_tabs=["🎯 目標價","📊 個股分析","📋 觀察名單","⚙️ 帳號設定"]
 if is_admin: _tabs.append("👑 用戶管理")
 tabs=st.tabs(_tabs)
 tab_tgt=tabs[0]; tab_ana=tabs[1]; tab_wl=tabs[2]; tab_acc=tabs[3]
