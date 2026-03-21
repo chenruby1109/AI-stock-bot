@@ -12,8 +12,12 @@ import gist_db as db
 
 try:    import ai_report;  AI_READY = True
 except: AI_READY = False
-try:    import broker as bk; BROKER_READY = True
-except: BROKER_READY = False
+try:
+    import broker as bk
+    import importlib; importlib.reload(bk)
+    BROKER_READY = True
+    _bk_ver = getattr(bk, 'VERSION', 'unknown')
+except: BROKER_READY = False; _bk_ver = 'not loaded'
 try:    import wave_chart as wc; WC_READY = True
 except: WC_READY = False
 try:    import global_market as gm; GM_READY = True
@@ -781,7 +785,7 @@ with tab_ana:
 
         # ── 主力券商 ──
         st.markdown("---")
-        st.markdown("#### 🏦 主力券商進出（當日）")
+        st.markdown(f"#### 🏦 主力券商進出（當日）  <span style='font-size:10px;color:#475569'>broker {_bk_ver}</span>", unsafe_allow_html=True)
         if not BROKER_READY:
             st.caption("⚠️ broker.py 未上傳")
         else:
