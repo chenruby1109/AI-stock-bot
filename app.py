@@ -1523,13 +1523,13 @@ with tab_tgt:
                         _sg2.metric(_sc["t2l"], f"{_sc['t2']:.2f}")
                         _sg3.metric("🛑 停損", f"{_sc['stop']:.2f}")
                         _sg4.metric("現價", f"{price_now:.2f}")
-                        # 說明列
+                        # 說明列（用已提取的變數，避免 f-string 引號衝突）
                         st.markdown(
-                            f"<div style='background:{_sc["bg"]};border:1px solid {_sc["border"]};"
-                            f"border-left:4px solid {_sc["color"]};border-radius:0 0 14px 14px;"
+                            f"<div style='background:{_bg};border:1px solid {_bd};"
+                            f"border-left:4px solid {_cl};border-radius:0 0 14px 14px;"
                             f"padding:10px 18px 14px;margin-bottom:14px'>"
-                            f"<span style='font-size:12px;color:#94a3b8'>📝 {_sc["desc"]}</span><br>"
-                            f"<span style='font-size:12px;color:#f87171'>⚠️ {_sc["risk"]}</span>"
+                            f"<span style='font-size:12px;color:#94a3b8'>📝 {_desc}</span><br>"
+                            f"<span style='font-size:12px;color:#f87171'>⚠️ {_risk}</span>"
                             f"</div>",
                             unsafe_allow_html=True
                         )
