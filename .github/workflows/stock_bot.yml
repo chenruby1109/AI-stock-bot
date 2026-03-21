@@ -1,1 +1,41 @@
 
+name: AI Stock Bot 定時推播
+
+on:
+  schedule:
+    # 台灣時間 = UTC+8，所以要減8小時
+    - cron: '30 1 * * 1-5'   # 台灣 09:30（週一到週五）
+    - cron: '20 2 * * 1-5'   # 台灣 10:20
+    - cron: '0  4 * * 1-5'   # 台灣 12:00
+    - cron: '36 5 * * 1-5'   # 台灣 13:36
+    - cron: '40 10 * * 1-5'  # 台灣 18:40（盤後深度報告）
+  workflow_dispatch:          # 手動觸發（測試用）
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install yfinance pandas numpy requests lxml html5lib
+
+      - name: Run bot task
+        env:
+          TG_TOKEN:     ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID:   ${{ secrets.TG_CHAT_ID }}
+          GH_TOKEN_GIST: ${{ secrets.GH_TOKEN_GIST }}
+          GIST_ID:      ${{ secrets.GIST_ID }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          python bot_task.py
