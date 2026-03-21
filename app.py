@@ -101,9 +101,14 @@ class _BKModule:
                 except Exception as e:
                     self._dbg = str(e)[:60]
                     continue
-        dbg = getattr(self, "_dbg", "no debug info")
-        return {"error": f"⚠️ {c} 無券商資料（非交易日）| {dbg}",
-                "buy_brokers":[],"sell_brokers":[],"net_total":0}
+        from datetime import datetime
+        today = datetime.now()
+        if today.weekday() >= 5:
+            msg = f"📅 {c} 今日（週{'六' if today.weekday()==5 else '日'}）無券商資料，TWSE 僅在交易日提供資料"
+        else:
+            dbg = getattr(self, "_dbg", "")
+            msg = f"⚠️ {c} 券商資料尚未更新（收盤後 3:30 才更新）" if not dbg else f"⚠️ {c} 無券商資料 | {dbg}"
+        return {"error": msg, "buy_brokers":[],"sell_brokers":[],"net_total":0}
 
 
     def get_institutional(self, code):
@@ -181,7 +186,10 @@ class _BKModule:
                                         "total":foreign+trust+dealer}
                     except: continue
             except Exception: continue
-        return {"error":"三大法人資料暫無","foreign":0,"trust":0,"dealer":0,"total":0}
+        from datetime import datetime as _dt2
+        _wd = _dt2.now().weekday()
+        _msg = f"📅 今日（週{'六' if _wd==5 else '日' if _wd==6 else '?'}）無三大法人資料" if _wd>=5 else "⚠️ 三大法人資料尚未更新"
+        return {"error":_msg,"foreign":0,"trust":0,"dealer":0,"total":0}
 
 bk = _BKModule()
 try:    import wave_chart as wc; WC_READY = True
