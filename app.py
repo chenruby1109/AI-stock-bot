@@ -846,27 +846,29 @@ with tab_ana:
                         break
             except: pass
 
-            st.markdown(f"""
-            <div class='tgt-card {cls}'>
-                <div style='display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px'>
-                    <div>
-                        <div style='font-size:11px;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px'>🎯 你的目標價</div>
-                        <div style='display:flex;align-items:center;gap:12px'>
-                            <span style='font-size:30px;font-weight:900;color:#38bdf8'>{my_tgt['target_price']:.2f}</span>
-                            <span style='font-size:14px;font-weight:700;color:{sc}'>{tc['status']}</span>
-                        </div>
-                        <div style='font-size:12px;color:#64748b;margin-top:4px'>{tc['desc']}</div>
-                    </div>
-                    {f'<div style="text-align:right;font-size:12px;color:#94a3b8;padding-top:4px">📊 {analyst_target}</div>' if analyst_target else ''}
-                </div>
-                <div class='tgt-progress-bg'><div class='tgt-progress-fill {cls}' style='width:{prog:.0f}%'></div></div>
-                <div style='display:flex;justify-content:space-between;font-size:11px;color:#475569'>
-                    <span>現價 {float(t["Close"]):.2f}</span>
-                    <span>{prog:.0f}%</span>
-                    <span>目標 {my_tgt['target_price']:.2f}</span>
-                </div>
-            </div>
-            """,unsafe_allow_html=True)
+            # 變數先取出，避免 f-string 嵌套
+            _tgt_price  = my_tgt["target_price"]
+            _tgt_status = tc["status"]
+            _tgt_desc   = tc["desc"]
+            _close_now  = float(t["Close"])
+            _at_html    = f"<div style='text-align:right;font-size:12px;color:#94a3b8'>📊 {analyst_target}</div>" if analyst_target else ""
+            st.markdown(
+                f"<div class='tgt-card {cls}'>"
+                f"<div style='display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px'>"
+                f"<div>"
+                f"<div style='font-size:11px;color:#64748b;margin-bottom:4px'>🎯 你的目標價</div>"
+                f"<div style='display:flex;align-items:center;gap:12px'>"
+                f"<span style='font-size:30px;font-weight:900;color:#38bdf8'>{_tgt_price:.2f}</span>"
+                f"<span style='font-size:14px;font-weight:700;color:{sc}'>{_tgt_status}</span>"
+                f"</div>"
+                f"<div style='font-size:12px;color:#64748b;margin-top:4px'>{_tgt_desc}</div>"
+                f"</div>{_at_html}</div>"
+                f"<div class='tgt-progress-bg'><div class='tgt-progress-fill {cls}' style='width:{prog:.0f}%'></div></div>"
+                f"<div style='display:flex;justify-content:space-between;font-size:11px;color:#475569'>"
+                f"<span>現價 {_close_now:.2f}</span><span>{prog:.0f}%</span><span>目標 {_tgt_price:.2f}</span>"
+                f"</div></div>",
+                unsafe_allow_html=True
+            )
         else:
             # 沒設目標價時顯示法人目標價
             try:
