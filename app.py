@@ -909,12 +909,18 @@ with tab_ana:
                 phtml=(f"🦁 激進 <b>{buy_agg:.2f}</b> &nbsp;·&nbsp; 🐢 保守 <b>{buy_con:.2f}</b> &nbsp;·&nbsp; 🛑 停損 <b>{stop:.2f}</b>")
             else:
                 phtml=(f"⚡ 建議出場 <b>{float(t['Close']):.2f}</b> &nbsp;·&nbsp; 🛑 停損 <b>{stop:.2f}</b>")
-            # SOP 橫幅
-            st.markdown(f"""<div class='{css}'>
-                <div class='sop-title'>{atxt}</div>
-                <div class='sop-conds'>✅ KD：{sop['kd_label']} &nbsp;&nbsp; ✅ MACD：{sop['macd_label']} &nbsp;&nbsp; ✅ SAR：{sop['sar_label']}</div>
-                {f'<div style="margin-top:8px;font-size:13px;color:rgba(255,255,255,0.7)">{hints}</div>' if hints else ''}
-            </div>""",unsafe_allow_html=True)
+            # SOP 橫幅（純文字，不內嵌變數 HTML）
+            _kd_txt  = sop['kd_label']
+            _mac_txt = sop['macd_label']
+            _sar_txt = sop['sar_label']
+            st.markdown(
+                f"<div class='{css}'>"
+                f"<div class='sop-title'>{atxt}</div>"
+                f"<div class='sop-conds'>✅ KD：{_kd_txt} &nbsp;&nbsp; ✅ MACD：{_mac_txt} &nbsp;&nbsp; ✅ SAR：{_sar_txt}</div>"
+                + (f"<div style='margin-top:8px;font-size:13px;color:rgba(255,255,255,0.7)'>{hints}</div>" if hints else "")
+                + "</div>",
+                unsafe_allow_html=True
+            )
             # 價格 metrics（用 st.columns，不放在 HTML 裡）
             if signal == "BUY":
                 _pc1,_pc2,_pc3,_pc4 = st.columns(4)
