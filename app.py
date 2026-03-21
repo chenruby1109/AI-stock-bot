@@ -35,8 +35,11 @@ def _bk_fmt(raw):
 def _bk_dates(n=10):
     from datetime import datetime, timedelta
     dates, d = [], datetime.now()
+    # 從昨天開始往回找（避免今天資料還沒更新）
+    d -= timedelta(days=1)
     while len(dates) < n:
-        if d.weekday() < 5: dates.append(d.strftime("%Y%m%d"))
+        if d.weekday() < 5:
+            dates.append(d.strftime("%Y%m%d"))
         d -= timedelta(days=1)
     return dates
 
@@ -71,8 +74,8 @@ class _BKModule:
             # TWT44U：個股券商買賣明細（正確 endpoint）
             # 格式：[券商代號, 券商名稱, 買進股數, 賣出股數, 差異股數]
             for url in [
-                f"https://www.twse.com.tw/fund/TWT44U?response=json&date={dt}&stockNo={c}",
                 f"https://www.twse.com.tw/fund/T86?response=json&date={dt}&stockNo={c}",
+                f"https://www.twse.com.tw/pcversion/zh/fund/T86?response=json&date={dt}&stockNo={c}",
             ]:
                 try:
                     r = requests.get(url, headers=_BK_HDR, timeout=15)
