@@ -721,7 +721,7 @@ with tab_ana:
             st.markdown("#### 📊 日K線圖 + 波浪標注")
             _fig = wc.build_kline_chart(df_d, df_60=df_60, wave_label_d=w_d, stock_name=nm, code=cc)
             if _fig:
-                st.plotly_chart(_fig, use_container_width=True, config={"displayModeBar":False})
+                st.plotly_chart(_fig, use_container_width=True, config={"displayModeBar":False}, key=f"chart_{cc}")
         else:
             _cd = df_d[["Close","MA5","MA20","MA60"]].iloc[-60:].dropna()
             if not _cd.empty:
@@ -1424,7 +1424,7 @@ with tab_tgt:
                     _fig = wc.build_kline_chart(df_tmp, wave_label_d=w_label,
                                                 stock_name=nm_t, code=code)
                     if _fig:
-                        st.plotly_chart(_fig, use_container_width=True,
+                        st.plotly_chart(_fig, use_container_width=True, key=f"tgt_chart_{code}",
                                         config={"displayModeBar": False})
 
                 # ── 劇本推演 ──
