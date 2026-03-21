@@ -550,15 +550,47 @@ def build_kline_chart(df, df_60=None, wave_label_d="N/A",
                 name="量5MA", showlegend=False,
             ), row=2, col=1)
 
-    # ── 右上角資訊框 ──
+    # ── 右上角資訊框：波浪計數 + 目標價預估 ──
     conf_color = "#4ade80" if confidence>=70 else "#fbbf24" if confidence>=50 else "#f87171"
+
+    # 計算費波那契目標價預估文字
+    target_hint = ""
+    w_map = {w[2]: w[1] for w in waves}
+    w0 = w_map.get("起", 0); w1 = w_map.get("①", 0)
+    w2 = w_map.get("②", 0); w3 = w_map.get("③", 0)
+    w4 = w_map.get("④", 0)
+    len1 = (w1 - w0) if w1 > w0 else 0
+    len3 = (w3 - w2) if w3 > w2 else 0
+    cp = float(C[-1]) if len(C) > 0 else 0
+
+    if current == "④" and len1 > 0 and w4 > 0:
+        t_eq  = w4 + len1
+        t_618 = w4 + len1 * 0.618
+        t_1618= w4 + len1 * 1.618
+        target_hint = (f"<br><span style='font-size:10px;color:#fbbf24'>"
+                       f"⑤浪目標：{t_618:.1f} / <b>{t_eq:.1f}</b> / {t_1618:.1f}</span>")
+    elif current == "③" and len1 > 0 and w2 > 0:
+        t3 = w2 + len1 * 1.618
+        t3b= w2 + len1 * 2.618
+        target_hint = (f"<br><span style='font-size:10px;color:#4ade80'>"
+                       f"③延伸目標：<b>{t3:.1f}</b> / {t3b:.1f}</span>")
+    elif current == "⑤" and len1 > 0 and w4 > 0:
+        t5 = w4 + len1
+        t5b= w4 + len1 * 1.618
+        target_hint = (f"<br><span style='font-size:10px;color:#f97316'>"
+                       f"⑤浪目標：{t5:.1f}（延伸{t5b:.1f}）</span>")
+    elif current == "②" and len1 > 0 and w1 > 0:
+        s382 = w1 - len1 * 0.382
+        s618 = w1 - len1 * 0.618
+        target_hint = (f"<br><span style='font-size:10px;color:#fb923c'>"
+                       f"②支撐：38.2%={s382:.1f} / 61.8%={s618:.1f}</span>")
+
     consol_line = ""
     if consol:
-        consol_line = f"<br><span style='color:{consol['color']};font-size:10px'>{consol['type']}  突破 {consol['resistance']:.2f} 看多</span>"
-
+        consol_line = f"<br><span style='color:{consol['color']};font-size:10px'>{consol['type']}  突破 {consol['resistance']:.2f}</span>"
     vio_line = ""
     if violations:
-        vio_line = f"<br><span style='color:#fbbf24;font-size:10px'>⚠️ {violations[0][:32]}</span>"
+        vio_line = f"<br><span style='color:#fbbf24;font-size:10px'>⚠️ {violations[0][:30]}</span>"
 
     fig.add_annotation(
         xref="paper", yref="paper",
@@ -566,11 +598,11 @@ def build_kline_chart(df, df_60=None, wave_label_d="N/A",
         text=(
             f"<b>{wave['emoji']} 波浪計數：{current}</b><br>"
             f"<span style='font-size:11px;color:#94a3b8'>KD/MACD：{wave['label']}</span><br>"
-            f"<span style='font-size:10px;color:{conf_color}'>信心度 {confidence}%  |  採用 {best_period} 日</span>"
-            f"{vio_line}{consol_line}"
+            f"<span style='font-size:10px;color:{conf_color}'>信心度 {confidence}%  採用 {best_period} 日</span>"
+            f"{target_hint}{vio_line}{consol_line}"
         ),
         showarrow=False, xanchor="right", align="right",
-        font=dict(size=13, color=wcolor, family="Outfit"),
+        font=dict(size=12, color=wcolor, family="Outfit"),
         bgcolor="rgba(6,11,24,0.92)",
         bordercolor=wcolor, borderwidth=2, borderpad=10,
     )
@@ -602,7 +634,7 @@ def build_kline_chart(df, df_60=None, wave_label_d="N/A",
         legend=dict(orientation="h",x=0,y=1.04,
                     font=dict(size=10,color="#64748b"),bgcolor="rgba(0,0,0,0)"),
         margin=dict(l=0,r=0,t=52,b=0),
-        height=560, font=dict(family="Outfit"), hovermode="x unified",
+        height=640, font=dict(family="Outfit"), hovermode="x unified",
     )
     ax = dict(gridcolor="rgba(255,255,255,0.05)",showgrid=True,zeroline=False,
               color="#475569",tickfont=dict(size=10,family="JetBrains Mono"))
