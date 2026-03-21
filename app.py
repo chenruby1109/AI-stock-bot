@@ -753,7 +753,25 @@ with tab_ana:
 
     # 分析按下 → 計算並存入 session_state
     if (run_btn or _auto_run) and si and si.strip():
-        cc=si.strip().replace(".TW","").replace(".TWO","")
+        _raw_si = si.strip()
+        # 若不是純數字，先用名稱搜尋轉換為代號
+        if not _raw_si.replace(".","").replace("-","").isdigit():
+            _sr = search_stock_by_name(_raw_si)
+            if len(_sr) == 1:
+                _raw_si = _sr[0]["code"]
+                st.info(f"🔍 找到：{_sr[0]['name']}（{_raw_si}）")
+            elif len(_sr) > 1:
+                _opts = [f"{r['code']}  {r['name']}" for r in _sr]
+                _picked = st.selectbox("找到多筆結果，請選擇：", _opts,
+                                       key="sr_sel", label_visibility="visible")
+                if st.button("✅ 確認分析", key="sr_ok", type="primary"):
+                    _raw_si = _picked.split()[0]
+                else:
+                    st.stop()
+            else:
+                st.warning(f"⚠️ 找不到「{_raw_si}」，請輸入4位數字代號（如 2486）")
+                st.stop()
+        cc=_raw_si.replace(".TW","").replace(".TWO","")
         with st.spinner(f"載入 {cc} 所有數據..."):
             df_d,df_60,df_30,cc=fetch_stock(cc)
             nm=fetch_name(cc)
@@ -1395,25 +1413,26 @@ with tab_tgt:
                 day_g = (price_g - price_prev_g) / price_prev_g * 100 if price_prev_g else 0
             else:
                 prog_g=50; sc_g="#64748b"; st_txt="—"; price_g=0; gp_g=0; day_g=0; reached_g=False; close_g=False
-            grid_cols[idx % 3].markdown(f"""
-            <div class='tgt-card {"reached" if reached_g else "close" if close_g else ""}' style='padding:16px 18px'>
-                <div style='font-size:13px;font-weight:700;color:#94a3b8'>{nm_g}
-                    <span style='color:#475569;font-size:11px;margin-left:6px'>{code}</span>
-                </div>
-                <div style='font-size:24px;font-weight:900;color:#f0f4ff;margin:6px 0'>
-                    {f"{price_g:.2f}" if price_g else "—"}
-                </div>
-                <div style='font-size:11px;color:{"#4ade80" if day_g>0 else "#f87171"}'>
-                    {f"{day_g:+.2f}% 今日" if price_g else ""}
-                </div>
-                <div class='tgt-progress-bg' style='margin:10px 0 4px'>
-                    <div class='tgt-progress-fill {"reached" if reached_g else "close" if close_g else ""}' style='width:{prog_g:.0f}%'></div>
-                </div>
-                <div style='display:flex;justify-content:space-between;font-size:11px'>
-                    <span style='color:#64748b'>目標 {entry["target_price"]:.2f}</span>
-                    <span style='color:{sc_g};font-weight:700'>{st_txt}</span>
-                </div>
-            </div>""", unsafe_allow_html=True)
+            # 卡片樣式用變數避免 f-string 嵌套複雜 HTML
+            _card_cls = "reached" if reached_g else "close" if close_g else ""
+            _fill_cls = _card_cls
+            _price_txt = f"{price_g:.2f}" if price_g else "—"
+            _day_color = "#4ade80" if day_g > 0 else "#f87171"
+            _day_txt = f"{day_g:+.2f}% 今日" if price_g else ""
+            _tgt_v = entry["target_price"]
+            grid_cols[idx % 3].markdown(
+                f"<div class='tgt-card {_card_cls}' style='padding:16px 18px'>"
+                f"<div style='font-size:13px;font-weight:700;color:#94a3b8'>{nm_g}"
+                f"<span style='color:#475569;font-size:11px;margin-left:6px'>{code}</span></div>"
+                f"<div style='font-size:24px;font-weight:900;color:#f0f4ff;margin:6px 0'>{_price_txt}</div>"
+                f"<div style='font-size:11px;color:{_day_color}'>{_day_txt}</div>"
+                f"<div class='tgt-progress-bg' style='margin:10px 0 4px'>"
+                f"<div class='tgt-progress-fill {_fill_cls}' style='width:{prog_g:.0f}%'></div></div>"
+                f"<div style='display:flex;justify-content:space-between;font-size:11px'>"
+                f"<span style='color:#64748b'>目標 {_tgt_v:.2f}</span>"
+                f"<span style='color:{sc_g};font-weight:700'>{st_txt}</span></div></div>",
+                unsafe_allow_html=True
+            )
 
         st.markdown("---")
 
