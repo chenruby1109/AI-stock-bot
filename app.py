@@ -552,6 +552,54 @@ def fetch_name(symbol):
     except: pass
     return symbol
 
+@st.cache_data(ttl=3600)
+def search_stock_by_name(query: str) -> list:
+    """
+    用中文名稱或代號搜尋股票
+    回傳: [{"code":"2330","name":"台積電"}, ...]
+    """
+    query = query.strip()
+    if not query: return []
+    results = []
+    try:
+        # 先嘗試 TWSE 上市
+        r = requests.get(
+            "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2",
+            headers={"User-Agent":"Mozilla/5.0"}, timeout=8
+        )
+        dfs = pd.read_html(r.text)
+        if dfs:
+            df = dfs[0]
+            df.columns = range(len(df.columns))
+            for _, row in df.iterrows():
+                cell = str(row[0]) if len(row) > 0 else ""
+                parts = cell.split("　")  # 全形空格分隔
+                if len(parts) >= 2:
+                    code = parts[0].strip()
+                    name = parts[1].strip()
+                    if (query in name or query in code) and code.isdigit() and len(code)==4:
+                        results.append({"code":code,"name":name})
+                        if len(results) >= 10: break
+    except: pass
+
+    # fallback: histock
+    if not results:
+        try:
+            r = requests.get("https://histock.tw/stock/rank.aspx?p=all",
+                           headers={"User-Agent":"Mozilla/5.0"},timeout=5)
+            dfs = pd.read_html(r.text); df = dfs[0]
+            cc = [c for c in df.columns if "代號" in str(c)][0]
+            cn = [c for c in df.columns if "股票" in str(c) or "名稱" in str(c)][0]
+            for _, row in df.iterrows():
+                code = "".join(c for c in str(row[cc]) if c.isdigit())
+                name = str(row[cn])
+                if (query in name or query in code) and code:
+                    results.append({"code":code,"name":name})
+                    if len(results) >= 10: break
+        except: pass
+
+    return results
+
 def _sar(hi,lo,af0=0.02,af_max=0.2):
     n=len(hi); s=np.zeros(n); tr=np.ones(n); ep=np.zeros(n); af=np.full(n,af0)
     s[0]=lo[0]; ep[0]=hi[0]
