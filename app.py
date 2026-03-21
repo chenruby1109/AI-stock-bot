@@ -50,28 +50,43 @@ class _BKModule:
     VERSION = "inline-v1"
 
     def get_broker_data(self, code):
+        """
+        個股券商分點進出
+        使用 TWT44U endpoint（個股三大法人及券商買賣明細）
+        T86 是「全市場券商彙總」不含個別股票，不適用
+        """
         c = code.strip().replace(".TW","").replace(".TWO","")
+
+        # 已知券商關鍵字，用來驗證資料是否為券商名稱
+        BROKER_KEYWORDS = [
+            "富邦","凱基","元大","國泰","永豐金","群益","玉山","兆豐","台新","中信",
+            "第一金","合庫","統一","日盛","大昌","宏遠","遠東","台銀","港商",
+            "美林","高盛","摩根","花旗","瑞士","德意志","巴克萊","野村","匯豐","麥格理",
+        ]
+
+        def _is_broker_name(name):
+            return any(k in str(name) for k in BROKER_KEYWORDS)
+
         for dt in _bk_dates():
-            # 嘗試多個 URL 格式
+            # TWT44U：個股券商買賣明細（正確 endpoint）
+            # 格式：[券商代號, 券商名稱, 買進股數, 賣出股數, 差異股數]
             for url in [
+                f"https://www.twse.com.tw/fund/TWT44U?response=json&date={dt}&stockNo={c}",
                 f"https://www.twse.com.tw/fund/T86?response=json&date={dt}&stockNo={c}",
-                f"https://www.twse.com.tw/pcversion/zh/fund/T86?response=json&date={dt}&stockNo={c}",
             ]:
                 try:
                     r = requests.get(url, headers=_BK_HDR, timeout=15)
                     if r.status_code != 200: continue
                     j = r.json()
                     if j.get("stat") != "OK": continue
-
                     rows = j.get("data") or []
                     if not rows or len(rows[0]) < 5: continue
-                    # row[0] 是券商代號（數字），row[1] 是券商名稱（中文）
-                    # 若 row[1] 含有已知股票名稱格式則跳過（防止讀到排行榜資料）
-                    sample_name = str(rows[0][1]).strip()
-                    sample_code = str(rows[0][0]).strip()
-                    # 券商代號通常是4碼純數字
-                    if not sample_code.isdigit():
-                        continue
+
+                    # ── 關鍵驗證：row[1] 必須是券商名稱，不能是股票名稱 ──
+                    # 若前三行都不含已知券商關鍵字，這批資料是錯的
+                    sample_names = [str(rows[i][1]) for i in range(min(3,len(rows)))]
+                    if not any(_is_broker_name(n) for n in sample_names):
+                        continue  # 不是券商資料，跳過
 
                     brokers = []
                     for row in rows:
@@ -90,8 +105,11 @@ class _BKModule:
                         "sell_brokers": [b for b in brokers if b["net"]<0][-10:][::-1],
                     }
                 except Exception: continue
-        return {"error":f"⚠️ 查無 {c} 券商資料（TWSE 非交易日或上櫃股票）",
-                "buy_brokers":[],"sell_brokers":[],"net_total":0}
+
+        return {
+            "error": f"⚠️ {c} 今日無主力券商資料（非交易日或資料尚未更新）",
+            "buy_brokers":[],"sell_brokers":[],"net_total":0
+        }
 
     def get_institutional(self, code):
         c = code.strip().replace(".TW","").replace(".TWO","")
