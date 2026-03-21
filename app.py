@@ -63,19 +63,14 @@ class _BKModule:
                     j = r.json()
                     if j.get("stat") != "OK": continue
 
-                    # ── 關鍵驗證：確認 fields 是券商相關欄位 ──
-                    fields = j.get("fields", [])
-                    fields_str = "".join(str(f) for f in fields)
-                    # T86 正確的 fields 應包含「券商」字樣
-                    if fields and "券商" not in fields_str:
-                        continue  # 不是券商資料表，跳過
-
                     rows = j.get("data") or []
                     if not rows or len(rows[0]) < 5: continue
-
-                    # 額外驗證：row[0] 是4碼數字（券商代號如1020）
-                    sample = str(rows[0][0]).strip()
-                    if not (sample.isdigit() and len(sample) == 4):
+                    # row[0] 是券商代號（數字），row[1] 是券商名稱（中文）
+                    # 若 row[1] 含有已知股票名稱格式則跳過（防止讀到排行榜資料）
+                    sample_name = str(rows[0][1]).strip()
+                    sample_code = str(rows[0][0]).strip()
+                    # 券商代號通常是4碼純數字
+                    if not sample_code.isdigit():
                         continue
 
                     brokers = []
@@ -114,10 +109,6 @@ class _BKModule:
                 if r.status_code != 200: continue
                 j = r.json()
                 if j.get("stat") != "OK" or not j.get("data"): continue
-
-                # 驗證 fields 含「外資」
-                fields = j.get("fields","")
-                if fields and "外資" not in str(fields): continue
 
                 rows = j.get("data")
                 # 找到對應我們股票的那行（row[1] 或 row[2] 含股票代號）
