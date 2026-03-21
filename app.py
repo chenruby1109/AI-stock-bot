@@ -948,12 +948,13 @@ with tab_ana:
                     st.markdown(f"<div class='report-box'>{result['report_md']}</div>",unsafe_allow_html=True)
 
 # ════════════════════════════════════════
-# TAB 2：目標價
+# TAB 1：目標價
 # ════════════════════════════════════════
 with tab_tgt:
     st.markdown("### 🎯 目標價投資計畫")
-    st.caption("設定目標價後，每次觸發 SOP 訊號時自動推播 Telegram 提醒")
+    st.caption("設定目標價後，自動生成完整投資計畫書 · 預估達標時間 · 買賣策略 · 技術線圖")
 
+    # ── 新增目標價 ──
     with st.container(border=True):
         st.markdown("#### ➕ 新增 / 更新目標價")
         t1c,t2c,t3c,t4c=st.columns([2,1.5,2,1])
@@ -972,7 +973,6 @@ with tab_tgt:
         ok=db.set_target(user["username"],user["display_name"],code_in,tc_price,tc_note)
         if ok:
             st.success(f"✅ 已設定 {nm_in}（{code_in}）目標價 {tc_price:.2f}")
-            # 🔔 推播目標價設定通知
             chat_id=user.get("telegram_chat_id","") or tg_chat_secret
             if chat_id:
                 msg=(f"🎯 <b>目標價設定通知</b>\n\n"
@@ -986,39 +986,55 @@ with tab_tgt:
         else:
             st.error("儲存失敗")
 
-    st.markdown("---")
+    # ── 沒有目標價 → 引導畫面 ──
     my_tgts=db.get_user_all_targets(user["username"])
-    st.markdown(f"#### 📌 追蹤中：{len(my_tgts)} 支")
     if not my_tgts:
-        st.markdown("""<div class='card' style='text-align:center;padding:40px'>
-            <div style='font-size:40px;margin-bottom:12px'>🎯</div>
-            <div style='font-size:18px;font-weight:700;color:#f0f4ff;margin-bottom:8px'>尚無目標價</div>
-            <div style='color:#64748b;font-size:14px'>設定目標價後每日自動追蹤進度<br>SOP 觸發時自動推播到你的 Telegram</div>
-        </div>""",unsafe_allow_html=True)
+        st.markdown("""
+        <div style='text-align:center;padding:48px 20px;animation:fadeUp .6s ease both'>
+            <div style='font-size:52px;margin-bottom:16px'>🎯</div>
+            <div style='font-size:20px;font-weight:800;color:#f0f4ff;margin-bottom:10px'>設定目標價，啟動你的投資計畫</div>
+            <div style='color:#64748b;font-size:14px;line-height:2;max-width:480px;margin:0 auto'>
+                輸入股票代碼 + 目標價後，系統自動生成：<br>
+                📋 <b style='color:#94a3b8'>完整投資計畫書</b>　·　
+                📈 <b style='color:#94a3b8'>技術線圖 + 波浪分析</b><br>
+                ⏰ <b style='color:#94a3b8'>預估達標日（扣除週末+連假）</b>　·　
+                💡 <b style='color:#94a3b8'>買賣策略分級</b><br>
+                🚧 <b style='color:#94a3b8'>途中壓力位提醒</b>　·　
+                📲 <b style='color:#94a3b8'>達標自動推播 Telegram</b>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     else:
-        # ── 總覽卡片格 ──
-        st.markdown("#### 📊 目標價總覽")
+        # ── 總覽格（有目標價才顯示）──
         grid_cols = st.columns(min(len(my_tgts), 3))
         for idx,(code,entry) in enumerate(my_tgts.items()):
             price_g,price_prev_g = get_quick_price(code)
             nm_g = fetch_name(code)
             if price_g:
-                gap_g = entry["target_price"] - price_g
-                gp_g  = gap_g / price_g * 100
+                gap_g  = entry["target_price"] - price_g
+                gp_g   = gap_g / price_g * 100
                 prog_g = min(100, max(0, price_g / entry["target_price"] * 100))
                 reached_g = price_g >= entry["target_price"]
                 close_g   = 0 < gp_g <= 5
-                sc_g = "#4ade80" if reached_g else "#fbbf24" if close_g else "#38bdf8"
-                st_txt = "✅ 已達標" if reached_g else f"🔥 差{gp_g:.1f}%" if close_g else f"📈 {gp_g:.1f}%"
+                sc_g  = "#4ade80" if reached_g else "#fbbf24" if close_g else "#38bdf8"
+                st_txt= "✅ 已達標" if reached_g else f"🔥 差{gp_g:.1f}%" if close_g else f"📈 {gp_g:.1f}%"
                 day_g = (price_g - price_prev_g) / price_prev_g * 100 if price_prev_g else 0
             else:
                 prog_g=50; sc_g="#64748b"; st_txt="—"; price_g=0; gp_g=0; day_g=0; reached_g=False; close_g=False
             grid_cols[idx % 3].markdown(f"""
-            <div class='tgt-card {"reached" if reached_g else "close" if close_g else ""}' style='padding:16px 18px;cursor:pointer'>
-                <div style='font-size:13px;font-weight:700;color:#94a3b8'>{nm_g} <span style='color:#475569;font-size:11px'>{code}</span></div>
-                <div style='font-size:22px;font-weight:900;color:#f0f4ff;margin:6px 0'>{f"{price_g:.2f}" if price_g else "—"}</div>
-                <div style='font-size:11px;color:{"#4ade80" if day_g>0 else "#f87171"}'>{f"{day_g:+.2f}%" if price_g else ""}</div>
-                <div class='tgt-progress-bg' style='margin:10px 0 6px'><div class='tgt-progress-fill {"reached" if reached_g else "close" if close_g else ""}' style='width:{prog_g:.0f}%'></div></div>
+            <div class='tgt-card {"reached" if reached_g else "close" if close_g else ""}' style='padding:16px 18px'>
+                <div style='font-size:13px;font-weight:700;color:#94a3b8'>{nm_g}
+                    <span style='color:#475569;font-size:11px;margin-left:6px'>{code}</span>
+                </div>
+                <div style='font-size:24px;font-weight:900;color:#f0f4ff;margin:6px 0'>
+                    {f"{price_g:.2f}" if price_g else "—"}
+                </div>
+                <div style='font-size:11px;color:{"#4ade80" if day_g>0 else "#f87171"}'>
+                    {f"{day_g:+.2f}% 今日" if price_g else ""}
+                </div>
+                <div class='tgt-progress-bg' style='margin:10px 0 4px'>
+                    <div class='tgt-progress-fill {"reached" if reached_g else "close" if close_g else ""}' style='width:{prog_g:.0f}%'></div>
+                </div>
                 <div style='display:flex;justify-content:space-between;font-size:11px'>
                     <span style='color:#64748b'>目標 {entry["target_price"]:.2f}</span>
                     <span style='color:{sc_g};font-weight:700'>{st_txt}</span>
@@ -1026,93 +1042,321 @@ with tab_tgt:
             </div>""", unsafe_allow_html=True)
 
         st.markdown("---")
-        st.markdown("#### 🔍 詳細分析")
+
+        # ── 每支股票的完整投資計畫書 ──
         for code,entry in my_tgts.items():
-            nm_t=fetch_name(code)
-            price_now,price_prev=get_quick_price(code)
+            nm_t      = fetch_name(code)
+            tgt_price = entry["target_price"]
+            price_now, price_prev = get_quick_price(code)
+
             if price_now:
-                gap=entry["target_price"]-price_now; gap_pct=gap/price_now*100
-                reached=price_now>=entry["target_price"]; close=0<gap_pct<=5
-                prog=min(100,max(0,price_now/entry["target_price"]*100))
-                day_pct=(price_now-price_prev)/price_prev*100 if price_prev else 0
-                try:
-                    df_tmp,_,_,_=fetch_stock(code); df_tmp=add_ind(df_tmp)
-                    atr_tmp=float(df_tmp["ATR"].iloc[-1]) if df_tmp is not None else price_now*0.02
-                    est_days=max(5,int(gap/max(atr_tmp*0.4,0.01)*2.0)) if gap>0 else 0
-                except: est_days=0
-                cls="reached" if reached else "close" if close else ""
-                sc="#4ade80" if reached else "#fbbf24" if close else "#38bdf8"
-                status="✅ 已達目標！" if reached else f"🔥 差 {gap_pct:.1f}%，即將達標！" if close else f"📈 推進中，差 {gap_pct:.1f}%"
-                price_str=f"{price_now:.2f}"
+                gap      = tgt_price - price_now
+                gap_pct  = gap / price_now * 100
+                reached  = price_now >= tgt_price
+                close    = 0 < gap_pct <= 5
+                day_pct  = (price_now - price_prev) / price_prev * 100 if price_prev else 0
+                prog     = min(100, max(0, price_now / tgt_price * 100))
+                cls      = "reached" if reached else "close" if close else ""
+                sc       = "#4ade80" if reached else "#fbbf24" if close else "#38bdf8"
             else:
-                prog=50; cls=""; sc="#64748b"; status="無法取得現價"
-                gap_pct=0; reached=False; close=False; est_days=0; day_pct=0; price_str="N/A"
+                gap=gap_pct=day_pct=prog=0; reached=close=False; cls=""; sc="#64748b"; price_now=0
 
-            with st.expander(f"{'✅' if reached else '🔥' if close else '📌'} {nm_t}（{code}） — 目標 {entry['target_price']:.2f}", expanded=True):
-                col_l,col_r=st.columns([3,1])
-                with col_l:
-                    st.markdown(f"""<div class='tgt-card {cls}'>
-                        <div style='display:flex;justify-content:space-between;align-items:flex-start'>
-                            <div>
-                                <span style='font-size:18px;font-weight:800;color:#f0f4ff'>{nm_t}</span>
-                                <span style='font-size:12px;color:#64748b;margin-left:8px'>{code}</span>
+            expander_icon = "✅" if reached else "🔥" if close else "📋"
+            with st.expander(
+                f"{expander_icon} {nm_t}（{code}）— 目標 {tgt_price:.2f}",
+                expanded=True
+            ):
+                # ────────────────────────────────
+                # 載入技術指標資料
+                # ────────────────────────────────
+                df_tmp = None
+                atr_val = price_now * 0.02 if price_now else 1
+                ma5=ma20=ma60=0; K=D=macd_h=sar_val=0
+                conds_met = 0
+                try:
+                    df_tmp,_,_,_ = fetch_stock(code)
+                    if df_tmp is not None:
+                        df_tmp = add_ind(df_tmp)
+                        t_t = df_tmp.iloc[-1]
+                        atr_val = float(t_t.get("ATR", price_now*0.02))
+                        ma5  = float(t_t.get("MA5",0))
+                        ma20 = float(t_t.get("MA20",0))
+                        ma60 = float(t_t.get("MA60",0))
+                        K    = float(t_t.get("K",50))
+                        D    = float(t_t.get("D",50))
+                        macd_h = float(t_t.get("MACD_HIST",0))
+                        sar_val = float(t_t.get("SAR", price_now*0.95))
+                        conds_list = [
+                            (price_now > ma60,      "站上季線（60MA）"),
+                            (macd_h > 0,            "MACD 翻紅"),
+                            (K > D,                 "KD 多頭排列"),
+                            (price_now > sar_val,   "突破 SAR 停損線"),
+                            (float(t_t.get("Volume",0)) > float(t_t.get("VOL_MA5",1))*1.2,
+                                                    "成交量放大"),
+                        ]
+                        conds_met = sum(1 for ok_c,_ in conds_list if ok_c)
+                except:
+                    conds_list = []
+
+                # ────────────────────────────────
+                # 計算台灣交易日（扣除週末 + 國定假日）
+                # ────────────────────────────────
+                def tw_trading_days_to_date(start_dt, n_days):
+                    """從 start_dt 往後數 n_days 個台灣交易日，回傳日期"""
+                    # 台灣國定假日（2026年）
+                    tw_holidays = {
+                        (1,1),(1,27),(1,28),(1,29),(1,30),(1,31),(2,2),(2,3),
+                        (2,4),(2,5),(2,6),(2,7),(2,8),(2,9),(2,10),  # 農曆春節
+                        (2,28),(4,4),(4,5),(5,1),(6,19),(9,28),(10,10),
+                        (12,25),
+                    }
+                    d = start_dt
+                    count = 0
+                    while count < n_days:
+                        d += timedelta(days=1)
+                        if d.weekday() < 5 and (d.month, d.day) not in tw_holidays:
+                            count += 1
+                    return d
+
+                # 預估達標交易日（ATR 計算）
+                if gap > 0 and atr_val > 0:
+                    raw_days = max(5, int(gap / (atr_val * 0.4) * 2.0))
+                    eta_date = tw_trading_days_to_date(datetime.now(), raw_days)
+                    eta_str  = eta_date.strftime("%Y/%m/%d")
+                    # 換算實際日曆天
+                    cal_days = (eta_date - datetime.now()).days
+                else:
+                    raw_days = 0; eta_str = "—"; cal_days = 0
+
+                # ────────────────────────────────
+                # 區塊1：現況 + 進度
+                # ────────────────────────────────
+                r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+                r1c1.metric("現價",   f"{price_now:.2f}" if price_now else "—",
+                            f"{'+' if day_pct>0 else ''}{day_pct:.2f}%" if price_now else "")
+                r1c2.metric("目標價",  f"{tgt_price:.2f}")
+                r1c3.metric("差距",    f"{abs(gap):.2f}（{abs(gap_pct):.1f}%）" if price_now else "—")
+                r1c4.metric("預估達標", eta_str if raw_days > 0 else "已達標" if reached else "—",
+                            f"約{raw_days}交易日 / {cal_days}天" if raw_days > 0 else "")
+
+                # 進度條
+                prog_color = sc
+                st.markdown(f"""
+                <div style='margin:12px 0 4px;display:flex;justify-content:space-between;font-size:12px;color:#64748b'>
+                    <span>📍 現價 {price_now:.2f}</span>
+                    <span style='color:{prog_color};font-weight:700'>{"✅ 已達標！" if reached else f"進度 {prog:.0f}%"}</span>
+                    <span>🎯 目標 {tgt_price:.2f}</span>
+                </div>
+                <div class='tgt-progress-bg'>
+                    <div class='tgt-progress-fill {cls}' style='width:{prog:.0f}%'></div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                if entry.get("note"):
+                    st.markdown(f"<div class='card-sm'>📝 備註：{entry['note']}</div>", unsafe_allow_html=True)
+
+                st.markdown("---")
+
+                # ────────────────────────────────
+                # 區塊2：達標時間預估（視覺化）
+                # ────────────────────────────────
+                if raw_days > 0:
+                    st.markdown("#### ⏰ 達標時間預估")
+                    st.caption("以 ATR（平均真實波動）計算，已扣除台灣週末 + 國定假日")
+
+                    # 分3種情境
+                    days_fast   = max(3, int(raw_days * 0.6))
+                    days_normal = raw_days
+                    days_slow   = int(raw_days * 1.6)
+                    date_fast   = tw_trading_days_to_date(datetime.now(), days_fast).strftime("%m/%d")
+                    date_normal = tw_trading_days_to_date(datetime.now(), days_normal).strftime("%m/%d")
+                    date_slow   = tw_trading_days_to_date(datetime.now(), days_slow).strftime("%m/%d")
+
+                    tc1, tc2, tc3 = st.columns(3)
+                    tc1.markdown(f"""<div class='card' style='text-align:center;border-color:rgba(34,197,94,0.3)'>
+                        <div style='font-size:11px;color:#4ade80;font-weight:700;margin-bottom:6px'>🚀 樂觀情境</div>
+                        <div style='font-size:22px;font-weight:900;color:#f0f4ff'>{date_fast}</div>
+                        <div style='font-size:12px;color:#64748b;margin-top:4px'>約 {days_fast} 交易日<br>量能持續放大</div>
+                    </div>""", unsafe_allow_html=True)
+                    tc2.markdown(f"""<div class='card' style='text-align:center;border-color:rgba(56,189,248,0.3)'>
+                        <div style='font-size:11px;color:#38bdf8;font-weight:700;margin-bottom:6px'>📊 基本情境</div>
+                        <div style='font-size:22px;font-weight:900;color:#f0f4ff'>{date_normal}</div>
+                        <div style='font-size:12px;color:#64748b;margin-top:4px'>約 {days_normal} 交易日<br>正常波動推進</div>
+                    </div>""", unsafe_allow_html=True)
+                    tc3.markdown(f"""<div class='card' style='text-align:center;border-color:rgba(251,191,36,0.3)'>
+                        <div style='font-size:11px;color:#fbbf24;font-weight:700;margin-bottom:6px'>🐢 保守情境</div>
+                        <div style='font-size:22px;font-weight:900;color:#f0f4ff'>{date_slow}</div>
+                        <div style='font-size:12px;color:#64748b;margin-top:4px'>約 {days_slow} 交易日<br>遇修正整理</div>
+                    </div>""", unsafe_allow_html=True)
+
+                    st.markdown("---")
+
+                # ────────────────────────────────
+                # 區塊3：買賣策略分級
+                # ────────────────────────────────
+                if price_now and df_tmp is not None:
+                    st.markdown("#### 💡 買賣策略分級")
+
+                    # 計算關鍵價位
+                    buy_agg  = max(ma5,  price_now * 0.985) if ma5 > 0 else price_now * 0.985
+                    buy_con  = max(ma20, price_now * 0.975) if ma20 > 0 else price_now * 0.975
+                    stop_loss= max(ma60 * 0.98, price_now - atr_val * 2) if ma60 > 0 else price_now - atr_val * 2
+                    take1    = price_now + (tgt_price - price_now) * 0.33
+                    take2    = price_now + (tgt_price - price_now) * 0.66
+                    risk_pct = abs(price_now - stop_loss) / price_now * 100
+                    reward_pct = gap_pct
+
+                    rr_ratio = reward_pct / risk_pct if risk_pct > 0 else 0
+
+                    # 風險報酬比顏色
+                    rr_color = "#4ade80" if rr_ratio >= 3 else "#fbbf24" if rr_ratio >= 1.5 else "#f87171"
+                    rr_txt   = "優良" if rr_ratio >= 3 else "尚可" if rr_ratio >= 1.5 else "偏低"
+
+                    st.markdown(f"""
+                    <div class='card' style='border-color:rgba(99,102,241,0.3)'>
+                        <div style='font-size:13px;color:#64748b;margin-bottom:14px'>
+                            風險報酬比：<span style='color:{rr_color};font-weight:800;font-size:16px'>1 : {rr_ratio:.1f}</span>
+                            <span style='color:{rr_color};font-size:12px;margin-left:8px'>（{rr_txt}）</span>
+                        </div>
+                        <div style='display:grid;grid-template-columns:1fr 1fr;gap:10px'>
+                            <div style='background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.25);border-radius:10px;padding:12px'>
+                                <div style='font-size:11px;color:#4ade80;font-weight:700;margin-bottom:8px'>🦁 激進進場</div>
+                                <div style='font-size:18px;font-weight:800;color:#f0f4ff'>{buy_agg:.2f}</div>
+                                <div style='font-size:11px;color:#64748b;margin-top:4px'>突破當日高點 + 量增確認</div>
                             </div>
-                            <div style='text-align:right'>
-                                <div style='font-size:11px;color:#64748b'>現價</div>
-                                <div style='font-size:22px;font-weight:900;color:#f0f4ff'>{price_str}</div>
-                                <div style='font-size:12px;color:{"#4ade80" if day_pct>0 else "#f87171"}'>{f"+{day_pct:.2f}%" if day_pct>0 else f"{day_pct:.2f}%"}</div>
+                            <div style='background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.25);border-radius:10px;padding:12px'>
+                                <div style='font-size:11px;color:#38bdf8;font-weight:700;margin-bottom:8px'>🐢 保守進場</div>
+                                <div style='font-size:18px;font-weight:800;color:#f0f4ff'>{buy_con:.2f}</div>
+                                <div style='font-size:11px;color:#64748b;margin-top:4px'>回踩20MA支撐後量縮止跌</div>
+                            </div>
+                            <div style='background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.25);border-radius:10px;padding:12px'>
+                                <div style='font-size:11px;color:#fbbf24;font-weight:700;margin-bottom:8px'>💰 分批獲利 ①</div>
+                                <div style='font-size:18px;font-weight:800;color:#f0f4ff'>{take1:.2f}</div>
+                                <div style='font-size:11px;color:#64748b;margin-top:4px'>達目標 33%，減碼 1/3</div>
+                            </div>
+                            <div style='background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.35);border-radius:10px;padding:12px'>
+                                <div style='font-size:11px;color:#fbbf24;font-weight:700;margin-bottom:8px'>💰 分批獲利 ②</div>
+                                <div style='font-size:18px;font-weight:800;color:#f0f4ff'>{take2:.2f}</div>
+                                <div style='font-size:11px;color:#64748b;margin-top:4px'>達目標 66%，再減 1/3</div>
                             </div>
                         </div>
-                        <div style='margin-top:16px'>
-                            <div style='display:flex;justify-content:space-between;font-size:12px;color:#64748b;margin-bottom:6px'>
-                                <span>進度</span>
-                                <span style='font-weight:700;color:{sc}'>{status}</span>
-                            </div>
-                            <div class='tgt-progress-bg'><div class='tgt-progress-fill {cls}' style='width:{prog:.0f}%'></div></div>
-                            <div style='display:flex;justify-content:space-between;font-size:11px;color:#475569;margin-top:4px'>
-                                <span>現價 {price_str}</span><span>{prog:.0f}%</span><span>目標 {entry['target_price']:.2f}</span>
+                        <div style='margin-top:12px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:10px;padding:12px'>
+                            <div style='display:flex;justify-content:space-between;align-items:center'>
+                                <div>
+                                    <span style='font-size:11px;color:#f87171;font-weight:700'>🛑 停損價</span>
+                                    <span style='font-size:18px;font-weight:800;color:#f0f4ff;margin-left:12px'>{stop_loss:.2f}</span>
+                                    <span style='font-size:11px;color:#64748b;margin-left:8px'>（-{risk_pct:.1f}%）</span>
+                                </div>
+                                <div style='font-size:11px;color:#64748b;text-align:right'>
+                                    60MA：{ma60:.2f}<br>跌破即停損
+                                </div>
                             </div>
                         </div>
-                        {f'<div style="margin-top:10px;font-size:12px;color:#64748b;background:rgba(255,255,255,0.05);padding:8px 12px;border-radius:8px">📝 {entry["note"]}</div>' if entry.get("note") else ''}
-                        <div style='margin-top:8px;font-size:11px;color:#475569'>設定於 {entry.get("updated_at","—")}</div>
-                    </div>""",unsafe_allow_html=True)
+                    </div>
+                    """, unsafe_allow_html=True)
 
-                    # 達標條件
-                    if not reached and price_now:
-                        st.markdown("**🔍 達標條件分析**")
-                        try:
-                            df_tmp,_,_,_=fetch_stock(code)
-                            if df_tmp is not None:
-                                df_tmp=add_ind(df_tmp); t_t=df_tmp.iloc[-1]
-                                hi=df_tmp["High"].iloc[-120:].max(); lo=df_tmp["Low"].iloc[-120:].min(); d_=hi-lo
-                                conds=[
-                                    (float(t_t["Close"])>float(t_t.get("MA60",t_t["Close"])), f"站上季線 {t_t.get('MA60',0):.2f}"),
-                                    (float(t_t["MACD_HIST"])>0, "MACD 翻紅，動能轉正"),
-                                    (float(t_t["K"])>float(t_t["D"]), "KD 多頭排列"),
-                                    (float(t_t["Volume"])>float(t_t["VOL_MA5"])*1.2, "成交量放大，主力進場"),
-                                    (float(t_t["Close"])>float(t_t["SAR"]), "突破 SAR 停損線"),
-                                ]
-                                met=sum(1 for ok_c,_ in conds if ok_c)
-                                st.caption(f"已達成 {met}/{len(conds)} 個條件")
-                                for ok_c,txt in conds:
-                                    c_="pass" if ok_c else "fail"
-                                    st.markdown(f"<div class='card-sm'><span class='{c_}'>{'✅' if ok_c else '❌'}</span> <span style='color:#94a3b8;font-size:13px'>{txt}</span></div>",unsafe_allow_html=True)
-                                res=[(hi-d_*0.236,"費波0.236"),(hi-d_*0.382,"費波0.382"),(float(t_t.get("MA20",0)),"20日均線"),(float(t_t.get("MA60",0)),"60日均線")]
-                                rs=[f"{l} {r:.2f}" for r,l in res if price_now<r<entry["target_price"] and r>0]
-                                if rs: st.markdown(f"<div class='card-sm' style='border-color:rgba(251,191,36,0.3)'><span style='color:#fbbf24;font-size:12px'>🚧 途中壓力：</span><span style='color:#94a3b8;font-size:13px'>{' → '.join(rs)}</span></div>",unsafe_allow_html=True)
-                        except: pass
+                    st.markdown("---")
 
-                with col_r:
-                    if price_now:
-                        st.metric("目標價",f"{entry['target_price']:.2f}")
-                        st.metric("現價",price_str,f"{'+' if day_pct>0 else ''}{day_pct:.2f}%")
-                        st.metric("差距",f"{abs(gap):.2f} 元",f"{abs(gap_pct):.1f}%")
-                        if est_days>0:
-                            eta=(datetime.now()+timedelta(days=est_days)).strftime("%m/%d")
-                            st.metric("預估達標",f"~{est_days}天",f"約 {eta}")
-                    if st.button("🗑️ 刪除",key=f"dt_{code}",use_container_width=True):
-                        db.delete_target(user["username"],code)
-                        st.success("已刪除"); st.rerun()
+                # ────────────────────────────────
+                # 區塊4：達標條件檢查表
+                # ────────────────────────────────
+                if not reached and price_now and conds_list:
+                    st.markdown("#### ✅ 達標條件檢查表")
+                    st.caption(f"已達成 {conds_met}/{len(conds_list)} 個條件")
+
+                    # 進度環（用 HTML）
+                    cond_pct = int(conds_met / len(conds_list) * 100)
+                    cond_color = "#4ade80" if cond_pct>=80 else "#fbbf24" if cond_pct>=60 else "#f87171"
+                    st.markdown(f"""
+                    <div style='display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px'>
+                        <div style='background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);
+                             border-radius:12px;padding:16px 20px;flex:1;min-width:200px'>
+                            <div style='font-size:11px;color:#64748b;margin-bottom:4px'>技術條件達成率</div>
+                            <div style='font-size:28px;font-weight:900;color:{cond_color}'>{cond_pct}%</div>
+                            <div style='background:rgba(255,255,255,0.08);border-radius:99px;height:6px;margin-top:8px;overflow:hidden'>
+                                <div style='height:100%;width:{cond_pct}%;background:{cond_color};border-radius:99px;
+                                     transition:width .8s ease'></div>
+                            </div>
+                        </div>
+                        <div style='background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);
+                             border-radius:12px;padding:16px 20px;flex:1;min-width:200px'>
+                            <div style='font-size:11px;color:#64748b;margin-bottom:4px'>KD 狀態</div>
+                            <div style='font-size:20px;font-weight:800;color:{"#4ade80" if K>D else "#f87171"}'>
+                                {"多頭排列 ✅" if K>D else "空頭排列 ❌"}
+                            </div>
+                            <div style='font-size:12px;color:#64748b;margin-top:4px'>K={K:.1f}  D={D:.1f}</div>
+                        </div>
+                        <div style='background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);
+                             border-radius:12px;padding:16px 20px;flex:1;min-width:200px'>
+                            <div style='font-size:11px;color:#64748b;margin-bottom:4px'>MACD 動能</div>
+                            <div style='font-size:20px;font-weight:800;color:{"#4ade80" if macd_h>0 else "#f87171"}'>
+                                {"紅柱上漲 ✅" if macd_h>0 else "綠柱整理 ❌"}
+                            </div>
+                            <div style='font-size:12px;color:#64748b;margin-top:4px'>Hist={macd_h:+.4f}</div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    for ok_c, txt in conds_list:
+                        c_ = "pass" if ok_c else "fail"
+                        icon = "✅" if ok_c else "❌"
+                        st.markdown(
+                            f"<div class='card-sm'>"
+                            f"<span class='{c_}'>{icon}</span> "
+                            f"<span style='color:#94a3b8;font-size:13px'>{txt}</span>"
+                            f"</div>",
+                            unsafe_allow_html=True
+                        )
+
+                    # 途中壓力位
+                    try:
+                        hi  = df_tmp["High"].iloc[-120:].max()
+                        lo  = df_tmp["Low"].iloc[-120:].min()
+                        d_  = hi - lo
+                        resistances = []
+                        for r, lbl in [
+                            (hi - d_*0.236, "費波 23.6%"),
+                            (hi - d_*0.382, "費波 38.2%"),
+                            (ma20,          "20日均線"),
+                            (ma60,          "60日均線"),
+                            (hi,            "近期高點"),
+                        ]:
+                            if price_now < r < tgt_price and r > 0:
+                                resistances.append((r, lbl))
+                        if resistances:
+                            st.markdown("#### 🚧 途中壓力位")
+                            r_cols = st.columns(len(resistances))
+                            for i, (r_price, r_lbl) in enumerate(sorted(resistances)):
+                                dist = (r_price - price_now) / price_now * 100
+                                r_cols[i].markdown(f"""
+                                <div class='card-sm' style='text-align:center;border-color:rgba(251,191,36,0.25)'>
+                                    <div style='font-size:11px;color:#fbbf24'>{r_lbl}</div>
+                                    <div style='font-size:17px;font-weight:800;color:#f0f4ff;margin:4px 0'>{r_price:.2f}</div>
+                                    <div style='font-size:11px;color:#64748b'>+{dist:.1f}%</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                    except: pass
+
+                    st.markdown("---")
+
+                # ────────────────────────────────
+                # 區塊5：技術線圖（用 wave_chart）
+                # ────────────────────────────────
+                if WC_READY and df_tmp is not None:
+                    st.markdown("#### 📈 技術線圖 + 波浪分析")
+                    w_label = wave_label(df_tmp)
+                    _fig = wc.build_kline_chart(df_tmp, wave_label_d=w_label,
+                                                stock_name=nm_t, code=code)
+                    if _fig:
+                        st.plotly_chart(_fig, use_container_width=True,
+                                        config={"displayModeBar": False})
+
+                # ── 刪除按鈕 ──
+                st.markdown("---")
+                dcol1, dcol2 = st.columns([4, 1])
+                dcol2.button("🗑️ 刪除目標價", key=f"dt_{code}", use_container_width=True,
+                             on_click=lambda c=code: (db.delete_target(user["username"], c),
+                                                       st.rerun()))
 
     if is_admin:
         st.markdown("---")
@@ -1127,6 +1371,7 @@ with tab_tgt:
                         dot="🔵" if e["username"]==user["username"] else "⚪"
                         st.markdown(f"{dot} **{e['display_name']}** 目標 {e['target_price']:.2f}｜{e.get('note','—')}｜{e.get('updated_at','—')}")
                     st.divider()
+
 
 # ════════════════════════════════════════
 # TAB 3：觀察名單
