@@ -53,26 +53,13 @@ class _BKModule:
     VERSION = "inline-v1"
 
     def get_broker_data(self, code):
-        """
-        個股券商分點進出
-        使用 TWT44U endpoint（個股三大法人及券商買賣明細）
-        T86 是「全市場券商彙總」不含個別股票，不適用
-        """
         c = code.strip().replace(".TW","").replace(".TWO","")
-
-        # 已知券商關鍵字，用來驗證資料是否為券商名稱
-        BROKER_KEYWORDS = [
-            "富邦","凱基","元大","國泰","永豐金","群益","玉山","兆豐","台新","中信",
-            "第一金","合庫","統一","日盛","大昌","宏遠","遠東","台銀","港商",
-            "美林","高盛","摩根","花旗","瑞士","德意志","巴克萊","野村","匯豐","麥格理",
-        ]
-
-        def _is_broker_name(name):
-            return any(k in str(name) for k in BROKER_KEYWORDS)
-
+        BROKER_KW = ["富邦","凱基","元大","國泰","永豐金","群益","玉山","兆豐","台新","中信",
+                     "第一金","合庫","統一","日盛","大昌","宏遠","遠東","港商","美林","高盛",
+                     "摩根","花旗","瑞士","德意志","巴克萊","野村","匯豐","麥格理","新加坡"]
+        def _has_broker(s):
+            return any(k in str(s) for k in BROKER_KW)
         for dt in _bk_dates():
-            # TWT44U：個股券商買賣明細（正確 endpoint）
-            # 格式：[券商代號, 券商名稱, 買進股數, 賣出股數, 差異股數]
             for url in [
                 f"https://www.twse.com.tw/fund/T86?response=json&date={dt}&stockNo={c}",
                 f"https://www.twse.com.tw/pcversion/zh/fund/T86?response=json&date={dt}&stockNo={c}",
@@ -83,22 +70,26 @@ class _BKModule:
                     j = r.json()
                     if j.get("stat") != "OK": continue
                     rows = j.get("data") or []
-                    if not rows or len(rows[0]) < 5: continue
-
-                    # ── 關鍵驗證：row[1] 必須是券商名稱，不能是股票名稱 ──
-                    # 若前三行都不含已知券商關鍵字，這批資料是錯的
-                    sample_names = [str(rows[i][1]) for i in range(min(3,len(rows)))]
-                    if not any(_is_broker_name(n) for n in sample_names):
-                        continue  # 不是券商資料，跳過
-
+                    if not rows: continue
+                    row0 = rows[0]
+                    nc = len(row0)
+                    # 自動偵測：掃描前6欄找第一個含券商關鍵字的欄位
+                    ni = bi = si = None
+                    for ci in range(min(nc, 6)):
+                        if _has_broker(row0[ci]):
+                            ni, bi, si = ci, ci+1, ci+2
+                            break
+                    if ni is None:
+                        self._dbg = f"dt={dt} nc={nc} row0={list(row0[:6])}"
+                        continue
                     brokers = []
                     for row in rows:
-                        if len(row) < 5: continue
-                        name = _bk_fmt(str(row[1]).strip())
-                        buy  = _bk_lots(row[2])
-                        sell = _bk_lots(row[3])
-                        net  = buy - sell
-                        brokers.append({"name":name,"buy":buy,"sell":sell,"net":net})
+                        if len(row) <= si: continue
+                        nm  = _bk_fmt(str(row[ni]).strip())
+                        buy = _bk_lots(row[bi])
+                        sel = _bk_lots(row[si])
+                        net = buy - sel
+                        brokers.append({"name":nm,"buy":buy,"sell":sel,"net":net})
                     if not brokers: continue
                     brokers.sort(key=lambda x: x["net"], reverse=True)
                     return {
@@ -107,12 +98,13 @@ class _BKModule:
                         "buy_brokers":  [b for b in brokers if b["net"]>0][:10],
                         "sell_brokers": [b for b in brokers if b["net"]<0][-10:][::-1],
                     }
-                except Exception: continue
+                except Exception as e:
+                    self._dbg = str(e)[:60]
+                    continue
+        dbg = getattr(self, "_dbg", "no debug info")
+        return {"error": f"⚠️ {c} 無券商資料（非交易日）| {dbg}",
+                "buy_brokers":[],"sell_brokers":[],"net_total":0}
 
-        return {
-            "error": f"⚠️ {c} 今日無主力券商資料（非交易日或資料尚未更新）",
-            "buy_brokers":[],"sell_brokers":[],"net_total":0
-        }
 
     def get_institutional(self, code):
         c = code.strip().replace(".TW","").replace(".TWO","")
