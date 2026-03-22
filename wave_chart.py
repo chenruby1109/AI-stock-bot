@@ -1292,3 +1292,309 @@ def build_target_chart(result: dict, current_price: float,
         showlegend=False,
     )
     return fig
+
+
+# ═══════════════════════════════════════════════════════
+# 技術型態圖（獨立 Plotly 圖表，直接標注在K線上）
+# ═══════════════════════════════════════════════════════
+def build_pattern_chart(df, stock_name="", code=""):
+    """
+    偵測技術型態並繪製在K線圖上
+    直接在圖表標示頸線、趨勢線、目標價、型態說明
+    """
+    if not PLOTLY_OK: return None, []
+    
+    import numpy as np
+    H = df["High"].values.astype(float)
+    L = df["Low"].values.astype(float)
+    C = df["Close"].values.astype(float)
+    O = df["Open"].values.astype(float) if "Open" in df.columns else C
+    V = df["Volume"].values.astype(float) if "Volume" in df.columns else np.zeros(len(C))
+    dates = list(df.index)
+    n = len(H)
+
+    if n < 20: return None, []
+
+    # ── 偵測型態 ──
+    order = max(3, n//20)
+    pts = _find_pivots(H, L, order)
+    
+    patterns_found = []
+
+    # === 1. 頭肩頂/底 ===
+    for direction in ["top","bottom"]:
+        typ = "H" if direction=="top" else "L"
+        cands = [p for p in pts if p[2]==typ]
+        for i in range(len(cands)-2):
+            ls,h,rs = cands[i],cands[i+1],cands[i+2]
+            if direction=="top":
+                if not (h[1]>ls[1]*1.01 and h[1]>rs[1]*1.01): continue
+                if abs((ls[1]-rs[1])/ls[1])>0.12: continue
+            else:
+                if not (h[1]<ls[1]*0.99 and h[1]<rs[1]*0.99): continue
+                if abs((ls[1]-rs[1])/ls[1])>0.12: continue
+            troughs=[p for p in pts if p[2]!=typ and ls[0]<p[0]<rs[0]]
+            if len(troughs)<2: continue
+            t1,t2=troughs[0],troughs[-1]
+            nk=(t1[1]+t2[1])/2
+            head_size=abs(h[1]-nk)
+            target=nk-head_size if direction=="top" else nk+head_size
+            patterns_found.append({
+                "name": "頭肩頂" if direction=="top" else "頭肩底",
+                "bias": "bearish" if direction=="top" else "bullish",
+                "color": "#f87171" if direction=="top" else "#4ade80",
+                "reliability": 85,
+                "desc": f"頸線 {nk:.2f}，頭部 {h[1]:.2f}，目標 {target:.2f}",
+                "target": target,
+                "stop": rs[1],
+                "lines": [
+                    {"x0":dates[t1[0]],"y0":nk,"x1":dates[min(t2[0]+10,n-1)],"y1":nk,
+                     "color":"#fbbf24","dash":"dash","width":2,"label":"頸線"},
+                ],
+                "markers": [
+                    {"x":dates[ls[0]],"y":ls[1],"label":"左肩","color":"#94a3b8"},
+                    {"x":dates[h[0]], "y":h[1], "label":"頭",  "color":"#ef4444" if direction=="top" else "#4ade80"},
+                    {"x":dates[rs[0]],"y":rs[1],"label":"右肩","color":"#94a3b8"},
+                ],
+                "zones": [],
+            })
+            break
+
+    # === 2. 雙頂/雙底 ===
+    for direction in ["top","bottom"]:
+        typ="H" if direction=="top" else "L"
+        cands=[p for p in pts if p[2]==typ]
+        for i in range(len(cands)-1):
+            a,b=cands[i],cands[i+1]
+            if abs((a[1]-b[1])/a[1])>0.05: continue
+            mid=[p for p in pts if p[2]!=typ and a[0]<p[0]<b[0]]
+            if not mid: continue
+            valley=mid[0]; nk=valley[1]
+            head=(a[1]+b[1])/2
+            target=nk-(head-nk) if direction=="top" else nk+(nk-head)
+            nk_x0=dates[max(0,a[0]-5)]
+            nk_x1=dates[min(b[0]+10,n-1)]
+            patterns_found.append({
+                "name":"雙重頂(M頭)" if direction=="top" else "雙重底(W底)",
+                "bias":"bearish" if direction=="top" else "bullish",
+                "color":"#f87171" if direction=="top" else "#4ade80",
+                "reliability":78,
+                "desc":f"兩{'頂' if direction=='top' else '底'} {a[1]:.2f}/{b[1]:.2f}，頸線 {nk:.2f}，目標 {target:.2f}",
+                "target":target,"stop":max(a[1],b[1]) if direction=="top" else min(a[1],b[1]),
+                "lines":[{"x0":nk_x0,"y0":nk,"x1":nk_x1,"y1":nk,
+                           "color":"#fbbf24","dash":"dash","width":2,"label":"頸線"}],
+                "markers":[
+                    {"x":dates[a[0]],"y":a[1],"label":"頂1" if direction=="top" else "底1","color":"#f87171" if direction=="top" else "#4ade80"},
+                    {"x":dates[b[0]],"y":b[1],"label":"頂2" if direction=="top" else "底2","color":"#f87171" if direction=="top" else "#4ade80"},
+                ],
+                "zones":[],
+            })
+            break
+
+    # === 3. 三角形 ===
+    seg_n=min(60,n)
+    hi_pts=[p for p in pts if p[2]=="H" and p[0]>=n-seg_n][-5:]
+    lo_pts=[p for p in pts if p[2]=="L" and p[0]>=n-seg_n][-5:]
+    if len(hi_pts)>=2 and len(lo_pts)>=2:
+        hi_xs=[p[0] for p in hi_pts]; hi_ys=[p[1] for p in hi_pts]
+        lo_xs=[p[0] for p in lo_pts]; lo_ys=[p[1] for p in lo_pts]
+        def lr(xs,ys):
+            n2=len(xs); sx,sy=sum(xs),sum(ys)
+            sxy=sum(x*y for x,y in zip(xs,ys)); sxx=sum(x*x for x in xs)
+            d=n2*sxx-sx*sx
+            if d==0: return 0,sy/n2
+            s=(n2*sxy-sx*sy)/d; b=(sy-s*sx)/n2
+            return s,b
+        sh,bh=lr(hi_xs,hi_ys); sl,bl=lr(lo_xs,lo_ys)
+        # 起終點
+        x0_h=hi_xs[0]; x1_h=n-1
+        x0_l=lo_xs[0]; x1_l=n-1
+        uh0=sh*x0_h+bh; uh1=sh*x1_h+bh
+        ul0=sl*x0_l+bl; ul1=sl*x1_l+bl
+        width=abs(uh1-ul1)
+        
+        tri_name=tri_bias=tri_color=None
+        if abs(sh)<0.05 and sl>0.05:
+            tri_name,tri_bias,tri_color,tri_rel="上升三角形","bullish","#4ade80",72
+            target=uh1+width; desc=f"水平壓力 {uh1:.2f}，支撐上揚，突破後目標 {target:.2f}"
+        elif sh<-0.05 and abs(sl)<0.05:
+            tri_name,tri_bias,tri_color,tri_rel="下降三角形","bearish","#f87171",72
+            target=ul1-width; desc=f"水平支撐 {ul1:.2f}，壓力下彎，跌破後目標 {target:.2f}"
+        elif sh<-0.05 and sl>0.05:
+            tri_name,tri_bias,tri_color,tri_rel="對稱三角形(收斂)","neutral","#fbbf24",65
+            target=uh1+width; desc=f"上下收斂，壓力 {uh1:.2f} 支撐 {ul1:.2f}，等待突破"
+        elif sh>0.05 and sl<-0.05:
+            tri_name,tri_bias,tri_color,tri_rel="擴散三角形","neutral","#a78bfa",55
+            target=uh1; desc=f"上下擴散，波動加大，方向不明"
+        
+        if tri_name:
+            patterns_found.append({
+                "name":tri_name,"bias":tri_bias,"color":tri_color,
+                "reliability":tri_rel,"desc":desc,"target":target,
+                "stop":ul1 if tri_bias!="bearish" else uh1,
+                "lines":[
+                    {"x0":dates[x0_h],"y0":uh0,"x1":dates[x1_h],"y1":uh1,
+                     "color":tri_color,"dash":"solid","width":1.5,"label":"壓力線"},
+                    {"x0":dates[x0_l],"y0":ul0,"x1":dates[x1_l],"y1":ul1,
+                     "color":tri_color,"dash":"solid","width":1.5,"label":"支撐線"},
+                ],
+                "markers":[],"zones":[],
+            })
+
+    # === 4. 旗形 ===
+    mast_n2=min(12,n//4); flag_n2=min(15,n//3)
+    if n>mast_n2+flag_n2:
+        mast_move=(float(C[-flag_n2])-float(C[-(mast_n2+flag_n2)]))/float(C[-(mast_n2+flag_n2)])*100
+        if abs(mast_move)>=8:
+            fH=H[-flag_n2:]; fL=L[-flag_n2:]
+            xs3=list(range(flag_n2))
+            def lr2(xs,ys):
+                n2=len(xs); sx,sy=sum(xs),sum(ys); sxy=sum(x*y for x,y in zip(xs,ys)); sxx=sum(x*x for x in xs)
+                d=n2*sxx-sx*sx
+                if d==0: return 0,sy/n2
+                return (n2*sxy-sx*sy)/d,(sy-((n2*sxy-sx*sy)/d)*sx)/n2
+            sh3,bh3=lr2(xs3,list(fH)); sl3,bl3=lr2(xs3,list(fL))
+            cp3=float(C[-1]); mast_sz=abs(float(C[-flag_n2])-float(C[-(mast_n2+flag_n2)]))
+            flag_x0=dates[n-flag_n2]; flag_x1=dates[n-1]
+            if mast_move>0 and sh3<-0.02 and sl3<-0.02:
+                patterns_found.append({
+                    "name":"看漲旗形","bias":"bullish","color":"#4ade80","reliability":70,
+                    "desc":f"旗桿漲{mast_move:.1f}%，整理後目標 {cp3+mast_sz:.2f}",
+                    "target":cp3+mast_sz,"stop":float(min(fL)),
+                    "lines":[
+                        {"x0":flag_x0,"y0":bh3,"x1":flag_x1,"y1":bh3+sh3*(flag_n2-1),
+                         "color":"#4ade80","dash":"dash","width":1.5,"label":"旗形上軌"},
+                        {"x0":flag_x0,"y0":bl3,"x1":flag_x1,"y1":bl3+sl3*(flag_n2-1),
+                         "color":"#4ade80","dash":"dash","width":1.5,"label":"旗形下軌"},
+                    ],
+                    "markers":[],"zones":[],
+                })
+            elif mast_move<0 and sh3>0.02 and sl3>0.02:
+                patterns_found.append({
+                    "name":"看跌旗形","bias":"bearish","color":"#f87171","reliability":70,
+                    "desc":f"旗桿跌{abs(mast_move):.1f}%，反彈後目標 {cp3-mast_sz:.2f}",
+                    "target":cp3-mast_sz,"stop":float(max(fH)),
+                    "lines":[
+                        {"x0":flag_x0,"y0":bh3,"x1":flag_x1,"y1":bh3+sh3*(flag_n2-1),
+                         "color":"#f87171","dash":"dash","width":1.5,"label":"旗形上軌"},
+                        {"x0":flag_x0,"y0":bl3,"x1":flag_x1,"y1":bl3+sl3*(flag_n2-1),
+                         "color":"#f87171","dash":"dash","width":1.5,"label":"旗形下軌"},
+                    ],
+                    "markers":[],"zones":[],
+                })
+
+    if not patterns_found: return None, []
+
+    # ── 排序取前3 ──
+    patterns_found.sort(key=lambda x:x["reliability"],reverse=True)
+    top_patterns = patterns_found[:3]
+
+    # ── 繪製K線圖 ──
+    from plotly.subplots import make_subplots
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                        row_heights=[0.75, 0.25], vertical_spacing=0.02)
+
+    # K線
+    fig.add_trace(go.Candlestick(
+        x=dates, open=O, high=H, low=L, close=C,
+        increasing_line_color="#4ade80", decreasing_line_color="#f87171",
+        increasing_fillcolor="#4ade80", decreasing_fillcolor="#f87171",
+        line_width=1, name="K線",
+    ), row=1, col=1)
+
+    # 成交量
+    vol_colors=["#4ade80" if c>=o else "#f87171" for c,o in zip(C,O)]
+    fig.add_trace(go.Bar(x=dates,y=V,marker_color=vol_colors,
+                         opacity=0.5,showlegend=False,name="量"), row=2, col=1)
+
+    # ── 在圖上標注每個型態 ──
+    y_offset_multi = (max(H)-min(L)) * 0.04  # 避免標注重疊
+
+    for pi, pat in enumerate(top_patterns):
+        pc = pat["color"]
+        r,g,b = int(pc[1:3],16),int(pc[3:5],16),int(pc[5:7],16)
+
+        # 1. 繪製線條（頸線、趨勢線等）
+        for line in pat.get("lines",[]):
+            fig.add_shape(type="line",
+                x0=line["x0"], y0=line["y0"],
+                x1=line["x1"], y1=line["y1"],
+                line=dict(color=line["color"],width=line["width"],dash=line["dash"]),
+                row=1, col=1)
+            # 線條標籤
+            fig.add_annotation(
+                x=line["x1"], y=line["y1"],
+                text=f"<b>{line['label']}</b>",
+                showarrow=False, xanchor="left",
+                font=dict(size=9,color=line["color"],family="JetBrains Mono"),
+                bgcolor="rgba(6,11,24,0.8)", borderpad=2,
+                row=1, col=1)
+
+        # 2. 標記關鍵點（肩頭等）
+        for mk in pat.get("markers",[]):
+            fig.add_trace(go.Scatter(
+                x=[mk["x"]], y=[mk["y"]],
+                mode="markers+text",
+                text=[f"<b>{mk['label']}</b>"],
+                textposition="top center",
+                textfont=dict(size=10,color=mk["color"]),
+                marker=dict(color=mk["color"],size=10,symbol="diamond",
+                            line=dict(color="white",width=1.5)),
+                showlegend=False, hoverinfo="skip",
+            ), row=1, col=1)
+
+        # 3. 目標價線
+        tgt = pat.get("target",0)
+        if tgt and 0<tgt<max(H)*2.5:
+            fig.add_shape(type="line", xref="paper", x0=0, x1=1,
+                y0=tgt, y1=tgt,
+                line=dict(color=pc,width=2,dash="dot"), row=1, col=1)
+            tgt_pct=(tgt-float(C[-1]))/float(C[-1])*100
+            fig.add_annotation(xref="paper", x=0.99, y=tgt,
+                text=f"<b>🎯 {pat['name']} 目標 {tgt:.2f}（{'↑' if tgt_pct>0 else '↓'}{abs(tgt_pct):.1f}%）</b>",
+                showarrow=False, xanchor="right",
+                font=dict(size=10,color=pc,family="Outfit"),
+                bgcolor=f"rgba({r},{g},{b},0.15)",
+                bordercolor=pc, borderwidth=1, borderpad=5,
+                row=1, col=1)
+
+        # 4. 止損線
+        stp = pat.get("stop",0)
+        if stp and 0<stp<max(H)*2:
+            fig.add_shape(type="line", xref="paper", x0=0, x1=1,
+                y0=stp, y1=stp,
+                line=dict(color="#f87171",width=1,dash="dot"), row=1, col=1)
+
+        # 5. 右上角型態標籤（多個型態垂直排列）
+        fig.add_annotation(
+            xref="paper", yref="paper",
+            x=0.99, y=0.99 - pi*0.12,
+            text=(f"<b>{pat['name']}</b><br>"
+                  f"<span style='font-size:10px'>信心 {pat['reliability']}% | "
+                  f"{'📈' if pat['bias']=='bullish' else '📉' if pat['bias']=='bearish' else '↔️'}</span>"),
+            showarrow=False, xanchor="right", align="right",
+            font=dict(size=12,color=pc,family="Outfit"),
+            bgcolor=f"rgba({r},{g},{b},0.12)",
+            bordercolor=pc, borderwidth=1.5, borderpad=8,
+        )
+
+    fig.update_layout(
+        title=dict(
+            text=f"<b>{stock_name}（{code}）技術型態分析</b>",
+            font=dict(size=12,color="#e2e8f0",family="Outfit"), x=0,
+        ),
+        paper_bgcolor="rgba(6,11,24,0)",
+        plot_bgcolor="rgba(6,11,24,0)",
+        height=520,
+        margin=dict(l=0,r=0,t=44,b=0),
+        xaxis=dict(rangeslider=dict(visible=False),
+                   gridcolor="rgba(255,255,255,0.05)",showgrid=True),
+        xaxis2=dict(gridcolor="rgba(255,255,255,0.05)"),
+        yaxis=dict(gridcolor="rgba(255,255,255,0.05)",color="#475569",side="right"),
+        yaxis2=dict(gridcolor="rgba(255,255,255,0.05)",color="#475569",side="right"),
+        showlegend=False,
+        font=dict(family="Outfit",color="#94a3b8"),
+    )
+    fig.update_xaxes(showspikes=True, spikecolor="#475569", spikesnap="cursor")
+
+    return fig, top_patterns
