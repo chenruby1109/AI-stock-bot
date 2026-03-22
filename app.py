@@ -12,6 +12,9 @@ import gist_db as db
 
 try:    import ai_report;  AI_READY = True
 except: AI_READY = False
+try:
+    import pattern as pt; PATTERN_READY = True
+except: PATTERN_READY = False
 # ── Broker 功能內嵌（不依賴外部 broker.py）──
 import importlib as _il
 BROKER_READY = True
@@ -1074,6 +1077,40 @@ with tab_ana:
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+
+        # ── 技術型態分析 ──
+        if PATTERN_READY:
+            try:
+                _pats = pt.detect_patterns(df_d.tail(120))
+                if _pats:
+                    st.markdown("---")
+                    st.markdown("#### 🔍 技術型態識別")
+                    for _pat in _pats:
+                        _pc = _pat["color"]; _cp_now = float(t["Close"])
+                        _pt2 = _pat.get("target",0); _ps2 = _pat.get("stop",0)
+                        _pd2 = f"{'↑' if _pt2>_cp_now else '↓'}{abs((_pt2-_cp_now)/_cp_now*100):.1f}%" if _pt2 else ""
+                        _bt  = {"bullish":"📈 看漲","bearish":"📉 看跌","neutral":"↔️ 中性"}.get(_pat["bias"],"")
+                        st.markdown(
+                            f"<div style='background:{_pc}11;border:1px solid {_pc}33;"
+                            f"border-left:5px solid {_pc};border-radius:12px;padding:14px 18px;margin-bottom:10px'>"
+                            f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'>"
+                            f"<span style='font-size:15px;font-weight:800;color:{_pc}'>{_pat['emoji']} {_pat['name']}</span>"
+                            f"<span style='display:flex;gap:8px'>"
+                            f"<span style='background:{_pc}22;color:{_pc};font-size:11px;padding:2px 8px;border-radius:10px'>{_bt}</span>"
+                            f"<span style='background:rgba(255,255,255,0.06);color:#94a3b8;font-size:11px;padding:2px 8px;border-radius:10px'>信心度 {_pat['reliability']}%</span>"
+                            f"</span></div>"
+                            f"<div style='font-size:13px;color:#e2e8f0;margin-bottom:10px'>{_pat['desc']}</div>"
+                            f"<div style='display:flex;gap:10px;flex-wrap:wrap'>"
+                            + (f"<div style='background:rgba(255,255,255,0.05);border-radius:8px;padding:6px 12px'>"
+                               f"<div style='font-size:10px;color:#64748b'>🎯 目標</div>"
+                               f"<div style='font-size:15px;font-weight:800;color:{_pc}'>{_pt2:.2f} <span style='font-size:11px'>{_pd2}</span></div></div>" if _pt2 else "")
+                            + (f"<div style='background:rgba(239,68,68,0.08);border-radius:8px;padding:6px 12px'>"
+                               f"<div style='font-size:10px;color:#f87171'>🛑 止損</div>"
+                               f"<div style='font-size:15px;font-weight:800;color:#f87171'>{_ps2:.2f}</div></div>" if _ps2 else "")
+                            + f"</div></div>",
+                            unsafe_allow_html=True
+                        )
+            except Exception as _pe: pass
 
         # ── SOP ──
         signal=sop["signal"]
