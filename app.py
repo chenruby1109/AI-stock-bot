@@ -939,6 +939,50 @@ with tab_ana:
                         f"</tr></thead><tbody>{_fr2}</tbody></table>"
                         f"<div style='font-size:11px;color:#475569;margin-top:4px'>現價 {_cp:.2f} | 浪位 {w_d} | ⭐最接近 🎯你的目標</div>",
                         unsafe_allow_html=True)
+
+                    # ── 結構破壞條件 ──
+                    _BREAK_CONDS = {
+                        "3-1": [("⚠️ 跌破起漲低點","跌破①浪起漲低點，①浪計數錯誤，仍在整理中","#f87171"),
+                                ("⚠️ 量縮無法站上均線","縮量無法突破，假突破風險","#fbbf24")],
+                        "3-3": [("🛑 爆量長黑K","成交量暴增+長黑K，③浪提前結束進入④浪大幅修正","#f87171"),
+                                ("⚠️ MACD紅柱縮短","MACD紅柱持續縮短，③浪尾聲","#fbbf24")],
+                        "3-5": [("🛑 無法突破③浪高點","⑤浪失敗，快速轉空，直接進入熊市修正","#f87171"),
+                                ("⚠️ 量價持續背離","量縮但價未新高，⑤浪延伸空間有限","#fbbf24")],
+                        "3-a": [("🛑 量增跌破前支撐","A浪加速下跌","#f87171"),
+                                ("⚠️ 均線由多轉空排列","整個五浪可能已完成","#fbbf24")],
+                        "4-a": [("🛑 跌破①浪高點","鐵律3違反，整個艾略特結構需重新定義，全部出場","#f87171"),
+                                ("⚠️ 量增破38.2%費波","④浪修正加深至50%或61.8%","#fbbf24")],
+                        "4-b": [("🛑 B浪量增過前高","若量增突破前高，④浪可能已完成，直接啟動⑤浪","#4ade80"),
+                                ("⚠️ B浪量縮無力","B浪反彈無力，C浪快速下跌","#fbbf24")],
+                        "4-c": [("🛑 跌破①浪高點","艾略特結構完全失效，進入大級別空頭","#f87171"),
+                                ("✅ 量縮止跌+KD低位金叉","⑤浪啟動訊號確認","#4ade80")],
+                        "C-3": [("✅ 量縮+KD低位背離","(C)浪可能提前完成，新推動浪開始","#4ade80"),
+                                ("🛑 量增繼續破低","(C)浪延伸，勿抄底","#f87171")],
+                        "B-a": [("🛑 B浪量縮無法過前高","(C)浪主跌即將展開","#f87171"),
+                                ("✅ 量增突破前高","底部確立，新推動浪啟動","#4ade80")],
+                        "B-c": [("🛑 B浪c子浪完成","(C)主跌展開，多單全清","#f87171"),
+                                ("✅ 量增突破A浪起點","修正結束，多頭重啟","#4ade80")],
+                    }
+                    _bc = _BREAK_CONDS.get(w_d, [
+                        ("⚠️ 量增跌破近期支撐","目前波浪結構可能改變，重新評估","#fbbf24"),
+                        ("🛑 均線空頭排列","多頭結構破壞","#f87171"),
+                    ])
+                    _bc_html = ""
+                    for _bc_icon, _bc_desc, _bc_color in _bc:
+                        _bc_html += (
+                            f"<div style='background:{_bc_color}11;border-left:3px solid {_bc_color};"
+                            f"border-radius:0 8px 8px 0;padding:8px 14px;margin-bottom:6px'>"
+                            f"<div style='font-size:12px;font-weight:700;color:{_bc_color}'>{_bc_icon}</div>"
+                            f"<div style='font-size:12px;color:#94a3b8;margin-top:2px'>{_bc_desc}</div>"
+                            f"</div>"
+                        )
+                    st.markdown(
+                        f"<div style='margin-top:12px'>"
+                        f"<div style='font-size:12px;color:#64748b;font-weight:600;margin-bottom:8px'>🔍 結構破壞條件</div>"
+                        f"{_bc_html}</div>",
+                        unsafe_allow_html=True
+                    )
+
             except: pass
 
         # ── 目標價（第一欄位緊接在行情下方）──
