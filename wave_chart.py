@@ -520,53 +520,113 @@ def build_kline_chart(df, df_60=None, wave_label_d="N/A",
         _add_fib_lines(fig, row=1, lo_p=lo_p, hi_p=hi_p)
 
     # ── ⑤浪子浪標注（當 main_wave 在⑤浪時，在日K圖上標示子浪） ──
+    # ── ⑤浪子浪標注（滾動高低點演算法，不依賴 argrelextrema）──
     try:
         _w_map2 = {w[2]: w[1] for w in waves}
         _w4_price = _w_map2.get("④", 0)
+        _w4k = next((w[0] for w in waves if w[2] == "④"), None)
     except:
-        _w4_price = 0
-    if current == "⑤" and _w4_price > 0 and len(x_d) > 20:
-        # 從④浪位置之後找子浪轉折點
-        w4_idx = next((w[0] for w in waves if w[2] == "④"), max(0, len(x_d)-20))
-        _sub_H = H[w4_idx:]; _sub_L = L[w4_idx:]
-        if len(_sub_H) >= 5 and SCIPY_OK:
-            # 子浪偵測：order 要小一點才能抓到短期轉折
-            _sub_ord = max(2, len(_sub_H)//10)
-            _sub_pivots = _find_pivots(_sub_H, _sub_L, _sub_ord)
-            _SUB_LBLS = ["⑤起","5-1","5-2","5-3","5-4","5-5"]
-            _SUB_COLORS = {
-                "⑤起":"#64748b","5-1":"#7dd3fc","5-2":"#fed7aa",
-                "5-3":"#86efac","5-4":"#fdba74","5-5":"#fde68a"
-            }
-            for _si2, (_rel_idx, _sp, _stype) in enumerate((_sub_pivots or [])[:6]):
-                # _rel_idx 是相對於 _sub_H 的 index，要加 w4_idx 才是實際位置
-                _real_idx = w4_idx + _rel_idx
-                if _real_idx >= len(x_d): continue
-                _slbl = _SUB_LBLS[_si2] if _si2 < len(_SUB_LBLS) else f"5-{_si2}"
-                _sc2 = _SUB_COLORS.get(_slbl, "#94a3b8")
-                _is_hi = (_stype == "H")
-                # 高點標注往上，低點往下
-                _say = -36 if _is_hi else 36
-                # 標注用實際 price（H或L）
-                _ann_y = H[_real_idx] if _is_hi else L[_real_idx]
-                fig.add_annotation(
-                    x=x_d[_real_idx], y=_ann_y,
-                    text=f"<b>{_slbl}</b>",
-                    showarrow=True, arrowhead=0,
-                    arrowwidth=1, arrowcolor=_sc2,
-                    ax=0, ay=_say,
-                    font=dict(size=10, color=_sc2, family="Outfit"),
-                    bgcolor="rgba(6,11,24,0.80)",
-                    bordercolor=_sc2, borderwidth=1, borderpad=3,
-                    row=1, col=1,
-                )
-                # 小圓點標記
-                fig.add_trace(go.Scatter(
-                    x=[x_d[_real_idx]], y=[_ann_y],
-                    mode="markers",
-                    marker=dict(color=_sc2, size=5, symbol="circle"),
-                    showlegend=False, hoverinfo="skip",
-                ), row=1, col=1)
+        _w4_price = 0; _w4k = None
+
+    if current == "⑤" and _w4_price > 0 and _w4k is not None and len(x_d) - _w4k >= 5:
+        _sH = list(H[_w4k:])
+        _sL = list(L[_w4k:])
+        _sC = list(C[_w4k:])
+        _n  = len(_sH)
+
+        # ── 滾動轉折點：找真正的相對高低點 ──
+        # 用動態視窗：每個點和前後 win 根比較
+        def _find_turns(highs, lows, win=3):
+            """回傳 [(idx, price, type)] type='H' or 'L'"""
+            n = len(highs)
+            turns = []
+            for i in range(win, n - win):
+                h = highs[i]
+                l = lows[i]
+                # 局部高點：比前後 win 根的 high 都高
+                if all(h >= highs[i-k] for k in range(1, win+1)) and                    all(h >= highs[i+k] for k in range(1, win+1)):
+                    turns.append((i, h, "H"))
+                # 局部低點：比前後 win 根的 low 都低
+                elif all(l <= lows[i-k] for k in range(1, win+1)) and                      all(l <= lows[i+k] for k in range(1, win+1)):
+                    turns.append((i, l, "L"))
+            return turns
+
+        # 先用 win=3，若轉折太少換 win=2
+        _turns = _find_turns(_sH, _sL, win=3)
+        if len(_turns) < 4:
+            _turns = _find_turns(_sH, _sL, win=2)
+
+        # 去除相鄰同類型（保留更極端的那個）
+        def _dedupe(turns):
+            if not turns: return []
+            result = [turns[0]]
+            for t in turns[1:]:
+                if t[2] == result[-1][2]:
+                    # 同類型：保留更極端的
+                    if t[2] == "H" and t[1] > result[-1][1]:
+                        result[-1] = t
+                    elif t[2] == "L" and t[1] < result[-1][1]:
+                        result[-1] = t
+                else:
+                    result.append(t)
+            return result
+
+        _turns = _dedupe(_turns)
+
+        # 從第一個 Low 開始，交替 L→H→L→H→L→H（⑤浪6個轉折）
+        _sub_seq = []
+        _want = "L"
+        for _t in _turns:
+            if _t[2] == _want:
+                _sub_seq.append(_t)
+                _want = "H" if _want == "L" else "L"
+            if len(_sub_seq) >= 6: break
+
+        _SUB_DEF = [
+            ("⑤起", "#64748b"),
+            ("5-1",  "#7dd3fc"),
+            ("5-2",  "#fed7aa"),
+            ("5-3",  "#86efac"),
+            ("5-4",  "#fdba74"),
+            ("5-5",  "#fde68a"),
+        ]
+
+        # 畫連線
+        if len(_sub_seq) >= 2:
+            _sub_xs = [x_d[_w4k + t[0]] for t in _sub_seq if _w4k + t[0] < len(x_d)]
+            _sub_ys = [t[1] for t in _sub_seq[:len(_sub_xs)]]
+            fig.add_trace(go.Scatter(
+                x=_sub_xs, y=_sub_ys,
+                mode="lines",
+                line=dict(color="rgba(148,163,184,0.4)", width=1.5, dash="dot"),
+                showlegend=False, hoverinfo="skip",
+            ), row=1, col=1)
+
+        for _si, (_rel_idx, _sp, _stype) in enumerate(_sub_seq[:6]):
+            _real_idx = _w4k + _rel_idx
+            if _real_idx >= len(x_d): continue
+            _slbl, _sc2 = _SUB_DEF[_si]
+            _is_hi = (_stype == "H")
+            _ann_y = H[_real_idx] if _is_hi else L[_real_idx]
+            _say   = -40 if _is_hi else 40
+            fig.add_annotation(
+                x=x_d[_real_idx], y=_ann_y,
+                text=f"<b>{_slbl}</b>",
+                showarrow=True, arrowhead=0,
+                arrowwidth=1.5, arrowcolor=_sc2,
+                ax=0, ay=_say,
+                font=dict(size=11, color=_sc2, family="Outfit"),
+                bgcolor="rgba(6,11,24,0.88)",
+                bordercolor=_sc2, borderwidth=1.5, borderpad=4,
+                row=1, col=1,
+            )
+            fig.add_trace(go.Scatter(
+                x=[x_d[_real_idx]], y=[_ann_y],
+                mode="markers",
+                marker=dict(color=_sc2, size=7, symbol="circle",
+                            line=dict(color="white", width=1.5)),
+                showlegend=False, hoverinfo="skip",
+            ), row=1, col=1)
 
     # ── ▶ NOW ──
     lh = float(H[-1]); lc_ = float(C[-1])
