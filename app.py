@@ -1173,17 +1173,52 @@ with tab_ana:
         st.markdown("---")
         fc,bc=st.columns(2)
         with fc:
-            st.markdown("#### 📐 費波那契支撐壓力")
-            prc=t["Close"]
-            for ratio,key,name_ in [("0.236","0.236","強勢支撐"),("0.382","0.382","初級支撐"),("0.500","0.500","多空分界"),("0.618","0.618","黃金防線")]:
-                lvl=fib[key]; ok=prc>lvl
-                color="#4ade80" if ok else "#f87171"
-                st.markdown(f"""<div class='card-sm'>
-                    <span style='color:#64748b;font-size:12px'>{ratio} {name_}</span>
-                    <span style='float:right;font-weight:700;color:{color};font-family:JetBrains Mono'>
-                        {"✅" if ok else "⚠️"} {lvl:.2f}
-                    </span>
-                </div>""",unsafe_allow_html=True)
+            st.markdown("#### 📐 費波那契支撐壓力 + 延伸目標")
+            _prc = float(t["Close"])
+            # 用120日高低點算延伸基準
+            _fhi = float(df_d["High"].iloc[-120:].max()) if len(df_d)>=120 else float(df_d["High"].max())
+            _flo = float(df_d["Low"].iloc[-120:].min())  if len(df_d)>=120 else float(df_d["Low"].min())
+            _frng = _fhi - _flo if _fhi > _flo else _prc * 0.3
+
+            _fc1, _fc2 = st.columns(2)
+            # 左欄：支撐位
+            _fc1.markdown("<div style='font-size:11px;color:#64748b;font-weight:600;margin-bottom:6px'>📉 費波那契支撐</div>", unsafe_allow_html=True)
+            _sup_rows = ""
+            for ratio, key, name_ in [("0.236","0.236","強勢支撐"),("0.382","0.382","初級支撐"),("0.500","0.500","多空分界"),("0.618","0.618","黃金防線")]:
+                lvl = fib[key]; ok = _prc > lvl
+                _sc = "#4ade80" if ok else "#fbbf24" if _prc >= lvl*0.97 else "#f87171"
+                _ck = "✅" if ok else "⚠️" if _prc >= lvl*0.97 else "🔻"
+                _sd = (_prc - lvl) / _prc * 100
+                _sup_rows += (
+                    f"<div class='card-sm'>"
+                    f"<span style='color:#64748b;font-size:12px'>{ratio} {name_}</span>"
+                    f"<span style='float:right;font-weight:700;color:{_sc};font-family:JetBrains Mono'>"
+                    f"{_ck} {lvl:.2f} <span style='font-size:10px;color:#475569'>({_sd:+.1f}%)</span></span>"
+                    f"</div>"
+                )
+            _fc1.markdown(_sup_rows, unsafe_allow_html=True)
+
+            # 右欄：延伸目標
+            _fc2.markdown("<div style='font-size:11px;color:#64748b;font-weight:600;margin-bottom:6px'>📈 費波那契延伸目標</div>", unsafe_allow_html=True)
+            _ext_rows = ""
+            for _er, _elbl, _ec in [
+                (1.272, "保守目標", "#94a3b8"),
+                (1.618, "黃金目標", "#fbbf24"),
+                (2.000, "標準延伸", "#4ade80"),
+                (2.618, "強力延伸", "#38bdf8"),
+            ]:
+                _ev = _flo + _frng * _er
+                _ed = (_ev - _prc) / _prc * 100
+                _eok = _ev > _prc
+                _ec2 = _ec if _eok else "#f87171"
+                _ext_rows += (
+                    f"<div class='card-sm'>"
+                    f"<span style='color:#64748b;font-size:12px'>{_er} {_elbl}</span>"
+                    f"<span style='float:right;font-weight:700;color:{_ec2};font-family:JetBrains Mono'>"
+                    f"📍 {_ev:.2f} <span style='font-size:10px;color:#475569'>({'↑' if _eok else '↓'}{abs(_ed):.1f}%)</span></span>"
+                    f"</div>"
+                )
+            _fc2.markdown(_ext_rows, unsafe_allow_html=True)
         with bc:
             st.markdown("#### 📊 技術指標")
             bb=_v(t,"BB_PCT",0.5)
