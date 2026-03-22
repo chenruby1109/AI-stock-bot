@@ -1201,21 +1201,25 @@ with tab_ana:
             # 右欄：延伸目標
             _fc2.markdown("<div style='font-size:11px;color:#64748b;font-weight:600;margin-bottom:6px'>📈 費波那契延伸目標</div>", unsafe_allow_html=True)
             _ext_rows = ""
-            for _er, _elbl, _ec in [
-                (1.272, "保守目標", "#94a3b8"),
-                (1.618, "黃金目標", "#fbbf24"),
-                (2.000, "標準延伸", "#4ade80"),
-                (2.618, "強力延伸", "#38bdf8"),
+            for _er, _elbl, _ec, _eprob, _econd in [
+                (1.272, "保守目標", "#94a3b8", "40%", "量能普通，正常推動"),
+                (1.618, "黃金目標", "#fbbf24", "35%", "主力積極，MACD紅柱持續"),
+                (2.000, "標準延伸", "#4ade80", "15%", "法人買超，強勢行情"),
+                (2.618, "強力延伸", "#38bdf8", "10%", "爆量突破，牛市加速"),
             ]:
                 _ev = _flo + _frng * _er
                 _ed = (_ev - _prc) / _prc * 100
                 _eok = _ev > _prc
                 _ec2 = _ec if _eok else "#f87171"
                 _ext_rows += (
-                    f"<div class='card-sm'>"
-                    f"<span style='color:#64748b;font-size:12px'>{_er} {_elbl}</span>"
-                    f"<span style='float:right;font-weight:700;color:{_ec2};font-family:JetBrains Mono'>"
+                    f"<div class='card-sm' style='margin-bottom:4px'>"
+                    f"<div style='display:flex;justify-content:space-between;align-items:center'>"
+                    f"<span style='color:#64748b;font-size:12px'>{_er} {_elbl}"
+                    f"<span style='background:{_ec2}22;color:{_ec2};font-size:10px;padding:1px 6px;border-radius:4px;margin-left:6px'>{_eprob}</span></span>"
+                    f"<span style='font-weight:700;color:{_ec2};font-family:JetBrains Mono;font-size:13px'>"
                     f"📍 {_ev:.2f} <span style='font-size:10px;color:#475569'>({'↑' if _eok else '↓'}{abs(_ed):.1f}%)</span></span>"
+                    f"</div>"
+                    f"<div style='font-size:10px;color:#475569;margin-top:2px'>{_econd}</div>"
                     f"</div>"
                 )
             _fc2.markdown(_ext_rows, unsafe_allow_html=True)
