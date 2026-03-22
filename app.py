@@ -827,6 +827,120 @@ with tab_ana:
         </div>
         """,unsafe_allow_html=True)
 
+        # ── 波浪位置說明橫幅 ──
+        _WAVE_META = {
+            "3-1":("🌱","推動浪 ① 起漲初段","#38bdf8","突破確認，等②浪回測38.2~61.8%加碼，③才是主攻"),
+            "3-3":("🚀","推動浪 ③ 主升段","#4ade80","最強波段，每次回踩均是加碼點，MACD紅柱配量"),
+            "3-5":("🏔️","推動浪 ⑤ 末升段","#fbbf24","量價背離注意，逢高分批減倉，ABC修正即將展開"),
+            "3-a":("☕","推動浪後高檔整理","#94a3b8","推動浪完成後高位震盪，修正ABC即將展開"),
+            "4-a":("📉","修正浪 ④ A子浪","#fb923c","正常修正，等38.2%支撐止跌，布局⑤浪"),
+            "4-b":("👀","修正浪 ④ B子浪反彈","#f97316","技術反彈，不宜追多，等C浪完成後才是真正買點"),
+            "4-c":("🪤","修正浪 ④ C子浪末端","#a78bfa","接近底部，KD低位金叉+量縮後長紅=⑤浪啟動"),
+            "C-3":("🔻","ABC修正 C浪主跌","#f87171","主跌段，量增下跌勿抄底，等量縮止跌訊號"),
+            "C-5":("💥","C浪趕底末段","#dc2626","恐慌超跌，量縮止跌後可輕倉試多，嚴設停損"),
+            "B-a":("↗️","ABC修正 B浪反彈","#94a3b8","技術反彈，是出貨機會，非買點"),
+            "B-c":("⚠️","B浪 c子浪反彈高點","#ef4444","反彈最高點，C主跌即將展開，多單清倉"),
+        }
+        _wm = _WAVE_META.get(wave_label_d, ("📊",f"浪位 {wave_label_d}","#64748b","KD/MACD/均線綜合研判"))
+        st.markdown(
+            f"<div style='background:{_wm[2]}11;border:1px solid {_wm[2]}44;"
+            f"border-left:5px solid {_wm[2]};border-radius:12px;padding:12px 18px;"
+            f"margin-bottom:16px;display:flex;align-items:center;gap:14px'>"
+            f"<span style='font-size:24px'>{_wm[0]}</span>"
+            f"<div style='flex:1'><div style='font-size:15px;font-weight:800;color:{_wm[2]}'>{_wm[1]}</div>"
+            f"<div style='font-size:12px;color:#94a3b8;margin-top:3px'>{_wm[3]}</div></div>"
+            f"<div style='font-size:10px;color:#475569;text-align:right'>KD/MACD<br>研判</div></div>",
+            unsafe_allow_html=True
+        )
+
+        # ── 費波那契目標表 ──
+        if WC_READY:
+            try:
+                _fr=wc._count_elliott_bull(df_d,wave_label_d.startswith(("3","4")))
+                _fw=_fr.get("waves",[]); _fc=_fr.get("current","?")
+                _fm={w[2]:w[1] for w in _fw}; _cp=float(t["Close"])
+                _w0=_fm.get("起",0);_w1=_fm.get("①",0)
+                _w2=_fm.get("②",0);_w3=_fm.get("③",0);_w4=_fm.get("④",0)
+                _l1=(_w1-_w0) if _w1>_w0 else 0
+                _l3=(_w3-_w2) if _w3>_w2 else 0
+                _wmaj=wave_label_d.split("-")[0] if "-" in wave_label_d else wave_label_d
+
+                _ft=[]; _ftt=""
+                if _fc=="④" or _wmaj=="4":
+                    _b=_w4 if _w4>0 else _cp*0.88; _l=_l1 if _l1>0 else _cp*0.15
+                    _ftt=f"📈 ⑤浪目標（④低 {_b:.1f} ①幅 {_l:.1f}）"
+                    _ft=[("⑤=①×0.618",_b+_l*0.618,"#94a3b8","40%"),("⑤=①等長",_b+_l,"#fbbf24","35%"),
+                          ("⑤=①×1.382",_b+_l*1.382,"#4ade80","15%"),("⑤=①×1.618",_b+_l*1.618,"#38bdf8","10%")]
+                elif _fc=="③" or (_wmaj=="3" and wave_label_d.endswith(("1","3"))):
+                    _b=_w2 if _w2>0 else _cp*0.85; _l=_l1 if _l1>0 else _cp*0.15
+                    _ftt=f"🚀 ③浪延伸目標（②低 {_b:.1f} ①幅 {_l:.1f}）"
+                    _ft=[("③=①×1.0",_b+_l,"#94a3b8","20%"),("③=①×1.618",_b+_l*1.618,"#4ade80","50%"),
+                          ("③=①×2.618",_b+_l*2.618,"#38bdf8","25%"),("③=①×4.236",_b+_l*4.236,"#a78bfa","5%")]
+                elif _fc=="⑤" or wave_label_d.endswith("5"):
+                    _b=_w4 if _w4>0 else _cp*0.9; _l=_l1 if _l1>0 else _cp*0.12
+                    _ftt=f"🏔️ ⑤浪目標（④低 {_b:.1f}）"
+                    _ft=[("⑤=①×0.618",_b+_l*0.618,"#94a3b8","40%"),("⑤=①等長",_b+_l,"#fbbf24","35%"),
+                          ("⑤=①×1.618",_b+_l*1.618,"#38bdf8","15%"),("⑤延伸失敗",_w3 if _w3>0 else _cp*1.02,"#f87171","10%")]
+                else:
+                    if _wmaj=="3" and wave_label_d.endswith("a"):
+                        _hi=_w3 if _w3>0 else (_w1 if _w1>0 else _cp*1.1)
+                        _l=_l3 if _l3>0 else _l1 if _l1>0 else _cp*0.15
+                        _ftt=f"☕ 高檔整理後修正支撐（高 {_hi:.1f}）"
+                        _ft=[("回測23.6%",_hi-_l*0.236,"#94a3b8","10%"),("回測38.2%",_hi-_l*0.382,"#fbbf24","50%"),
+                              ("回測50.0%",_hi-_l*0.500,"#f97316","25%"),("回測61.8%",_hi-_l*0.618,"#f87171","15%")]
+                    elif _fw:
+                        _ahi=max(w[1] for w in _fw); _alo=min(w[1] for w in _fw); _rng=_ahi-_alo
+                        if _rng>0:
+                            _ftt=f"📐 費波那契支撐壓力（高 {_ahi:.1f} 低 {_alo:.1f}）"
+                            _ft=[("0.618壓力",_alo+_rng*0.618,"#4ade80",""),("0.786壓力",_alo+_rng*0.786,"#38bdf8",""),
+                                  ("0.382支撐",_ahi-_rng*0.382,"#fbbf24",""),("0.618支撐",_ahi-_rng*0.618,"#f87171","")]
+
+                if _ft:
+                    st.markdown(f"#### {_ftt}")
+                    _ap=[x[1] for x in _ft]+[_cp]; _pn=min(_ap)*0.97; _px=max(_ap)*1.03; _pr=_px-_pn or 1
+                    _bh=""
+                    for _fl2,_fp2,_fc2,_pb2 in sorted(_ft,key=lambda x:x[1],reverse=True):
+                        _pos=(_fp2-_pn)/_pr*100; _cpp=(_cp-_pn)/_pr*100
+                        _pct2=(_fp2-_cp)/_cp*100
+                        _bh+=(f"<div style='display:flex;align-items:center;gap:8px;margin-bottom:7px'>"
+                              f"<div style='font-size:11px;color:{_fc2};width:95px;text-align:right;flex-shrink:0'>{_fl2}</div>"
+                              f"<div style='flex:1;background:rgba(255,255,255,0.06);border-radius:4px;height:24px;position:relative'>"
+                              f"<div style='position:absolute;left:{min(_pos,_cpp):.1f}%;width:{abs(_pos-_cpp):.1f}%;height:100%;background:{_fc2}44;border-radius:2px'></div>"
+                              f"<div style='position:absolute;left:{_cpp:.1f}%;width:2px;height:100%;background:#ffffffaa'></div>"
+                              f"<div style='position:absolute;left:{_pos:.1f}%;transform:translateX(-50%);top:4px;font-size:10px;color:{_fc2};font-weight:700;text-shadow:0 0 4px #000;white-space:nowrap'>{_fp2:.2f}</div>"
+                              f"</div><div style='font-size:11px;color:{_fc2};width:55px;flex-shrink:0'>{'↑' if _pct2>0 else '↓'}{abs(_pct2):.1f}%</div>"
+                              f"<div style='font-size:10px;color:#64748b;width:28px;flex-shrink:0'>{_pb2}</div></div>")
+                    _my_v=float(my_tgt["target_price"]) if my_tgt else 0
+                    st.markdown(
+                        f"<div style='background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;margin-bottom:10px'>"
+                        f"<div style='font-size:11px;color:#475569;margin-bottom:10px;display:flex;justify-content:space-between'>"
+                        f"<span>低 {_pn:.2f}</span><span style='color:#ffffffaa'>▏現價 {_cp:.2f}</span><span>高 {_px:.2f}</span></div>"
+                        f"{_bh}</div>", unsafe_allow_html=True)
+                    _fr2=""
+                    for _fl,_fp,_fc2,_pb in _ft:
+                        _pct=(_fp-_cp)/_cp*100
+                        _cl=abs(_pct)==min(abs((_p2-_cp)/_cp*100) for _,_p2,_,_ in _ft)
+                        _iu=_my_v>0 and abs(_fp-_my_v)/_my_v<0.05
+                        _rbg="background:rgba(56,189,248,0.1);" if _iu else ("background:rgba(255,255,255,0.05);" if _cl else "")
+                        _bx=" 🎯" if _iu else (" ⭐" if _cl else "")
+                        _fr2+=(f"<tr style='border-bottom:1px solid rgba(255,255,255,0.06);{_rbg}'>"
+                               f"<td style='padding:9px 14px;font-size:13px;color:#e2e8f0'>{_fl}{_bx}</td>"
+                               f"<td style='padding:9px 14px;font-size:15px;font-weight:800;color:{_fc2}'>{_fp:.2f}</td>"
+                               f"<td style='padding:9px 14px;font-size:13px;color:{_fc2}'>{'↑' if _pct>0 else '↓'}{abs(_pct):.1f}%</td>"
+                               f"<td style='padding:9px 14px;font-size:12px;color:#64748b'>{_pb}</td></tr>")
+                    st.markdown(
+                        f"<table style='width:100%;border-collapse:collapse;background:rgba(255,255,255,0.02);"
+                        f"border:1px solid rgba(255,255,255,0.08);border-radius:12px;overflow:hidden'>"
+                        f"<thead><tr style='background:rgba(255,255,255,0.06)'>"
+                        f"<th style='padding:9px 14px;text-align:left;font-size:11px;color:#64748b;width:35%'>劇本</th>"
+                        f"<th style='padding:9px 14px;text-align:left;font-size:11px;color:#64748b'>目標/支撐</th>"
+                        f"<th style='padding:9px 14px;text-align:left;font-size:11px;color:#64748b'>距現價</th>"
+                        f"<th style='padding:9px 14px;text-align:left;font-size:11px;color:#64748b'>機率</th>"
+                        f"</tr></thead><tbody>{_fr2}</tbody></table>"
+                        f"<div style='font-size:11px;color:#475569;margin-top:4px'>現價 {_cp:.2f} | 浪位 {wave_label_d} | ⭐最接近 🎯你的目標</div>",
+                        unsafe_allow_html=True)
+            except: pass
+
         # ── 目標價（第一欄位緊接在行情下方）──
         my_tgt=db.get_user_target(user["username"],cc)
         if my_tgt:
@@ -1255,10 +1369,10 @@ with tab_tgt:
         # 代號 + 備註
         t_r1c1, t_r1c2 = st.columns([2, 3])
         with t_r1c1:
-            tc_code = st.text_input("", placeholder="股票代碼，如 2330 或台積電",
+            tc_code = st.text_input(" ", placeholder="股票代碼，如 2330 或台積電",
                                     key="tc", label_visibility="collapsed")
         with t_r1c2:
-            tc_note = st.text_input("", placeholder="📝 投資備註，如：法說會前布局，目標來源：法人報告",
+            tc_note = st.text_input(" ", placeholder="📝 投資備註，如：法說會前布局，目標來源：法人報告",
                                     key="tn", label_visibility="collapsed")
 
         # 三段目標價
@@ -1266,15 +1380,15 @@ with tab_tgt:
                     unsafe_allow_html=True)
         tp_c1, tp_c2, tp_c3, tp_c4 = st.columns([1, 1, 1, 1])
         with tp_c1:
-            tc_short_str = st.text_input("",
+            tc_short_str = st.text_input("短期目標",
                 placeholder="📈 短期目標（1-3個月）",
                 key="tp_short", label_visibility="collapsed")
         with tp_c2:
-            tc_mid_str = st.text_input("",
+            tc_mid_str = st.text_input("中期目標",
                 placeholder="📊 中期目標（3-6個月）",
                 key="tp_mid", label_visibility="collapsed")
         with tp_c3:
-            tc_long_str = st.text_input("",
+            tc_long_str = st.text_input("長期目標",
                 placeholder="🎯 長期目標（6個月+）",
                 key="tp_long", label_visibility="collapsed")
         with tp_c4:
