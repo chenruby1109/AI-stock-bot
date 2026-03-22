@@ -841,7 +841,7 @@ with tab_ana:
             "B-a":("↗️","ABC修正 B浪反彈","#94a3b8","技術反彈，是出貨機會，非買點"),
             "B-c":("⚠️","B浪 c子浪反彈高點","#ef4444","反彈最高點，C主跌即將展開，多單清倉"),
         }
-        _wm = _WAVE_META.get(wave_label_d, ("📊",f"浪位 {wave_label_d}","#64748b","KD/MACD/均線綜合研判"))
+        _wm = _WAVE_META.get(w_d, ("📊",f"浪位 {w_d}","#64748b","KD/MACD/均線綜合研判"))
         st.markdown(
             f"<div style='background:{_wm[2]}11;border:1px solid {_wm[2]}44;"
             f"border-left:5px solid {_wm[2]};border-radius:12px;padding:12px 18px;"
@@ -856,14 +856,14 @@ with tab_ana:
         # ── 費波那契目標表 ──
         if WC_READY:
             try:
-                _fr=wc._count_elliott_bull(df_d,wave_label_d.startswith(("3","4")))
+                _fr=wc._count_elliott_bull(df_d,w_d.startswith(("3","4")))
                 _fw=_fr.get("waves",[]); _fc=_fr.get("current","?")
                 _fm={w[2]:w[1] for w in _fw}; _cp=float(t["Close"])
                 _w0=_fm.get("起",0);_w1=_fm.get("①",0)
                 _w2=_fm.get("②",0);_w3=_fm.get("③",0);_w4=_fm.get("④",0)
                 _l1=(_w1-_w0) if _w1>_w0 else 0
                 _l3=(_w3-_w2) if _w3>_w2 else 0
-                _wmaj=wave_label_d.split("-")[0] if "-" in wave_label_d else wave_label_d
+                _wmaj=w_d.split("-")[0] if "-" in wave_label_d else wave_label_d
 
                 _ft=[]; _ftt=""
                 if _fc=="④" or _wmaj=="4":
@@ -871,18 +871,18 @@ with tab_ana:
                     _ftt=f"📈 ⑤浪目標（④低 {_b:.1f} ①幅 {_l:.1f}）"
                     _ft=[("⑤=①×0.618",_b+_l*0.618,"#94a3b8","40%"),("⑤=①等長",_b+_l,"#fbbf24","35%"),
                           ("⑤=①×1.382",_b+_l*1.382,"#4ade80","15%"),("⑤=①×1.618",_b+_l*1.618,"#38bdf8","10%")]
-                elif _fc=="③" or (_wmaj=="3" and wave_label_d.endswith(("1","3"))):
+                elif _fc=="③" or (_wmaj=="3" and w_d.endswith(("1","3"))):
                     _b=_w2 if _w2>0 else _cp*0.85; _l=_l1 if _l1>0 else _cp*0.15
                     _ftt=f"🚀 ③浪延伸目標（②低 {_b:.1f} ①幅 {_l:.1f}）"
                     _ft=[("③=①×1.0",_b+_l,"#94a3b8","20%"),("③=①×1.618",_b+_l*1.618,"#4ade80","50%"),
                           ("③=①×2.618",_b+_l*2.618,"#38bdf8","25%"),("③=①×4.236",_b+_l*4.236,"#a78bfa","5%")]
-                elif _fc=="⑤" or wave_label_d.endswith("5"):
+                elif _fc=="⑤" or w_d.endswith("5"):
                     _b=_w4 if _w4>0 else _cp*0.9; _l=_l1 if _l1>0 else _cp*0.12
                     _ftt=f"🏔️ ⑤浪目標（④低 {_b:.1f}）"
                     _ft=[("⑤=①×0.618",_b+_l*0.618,"#94a3b8","40%"),("⑤=①等長",_b+_l,"#fbbf24","35%"),
                           ("⑤=①×1.618",_b+_l*1.618,"#38bdf8","15%"),("⑤延伸失敗",_w3 if _w3>0 else _cp*1.02,"#f87171","10%")]
                 else:
-                    if _wmaj=="3" and wave_label_d.endswith("a"):
+                    if _wmaj=="3" and w_d.endswith("a"):
                         _hi=_w3 if _w3>0 else (_w1 if _w1>0 else _cp*1.1)
                         _l=_l3 if _l3>0 else _l1 if _l1>0 else _cp*0.15
                         _ftt=f"☕ 高檔整理後修正支撐（高 {_hi:.1f}）"
@@ -937,7 +937,7 @@ with tab_ana:
                         f"<th style='padding:9px 14px;text-align:left;font-size:11px;color:#64748b'>距現價</th>"
                         f"<th style='padding:9px 14px;text-align:left;font-size:11px;color:#64748b'>機率</th>"
                         f"</tr></thead><tbody>{_fr2}</tbody></table>"
-                        f"<div style='font-size:11px;color:#475569;margin-top:4px'>現價 {_cp:.2f} | 浪位 {wave_label_d} | ⭐最接近 🎯你的目標</div>",
+                        f"<div style='font-size:11px;color:#475569;margin-top:4px'>現價 {_cp:.2f} | 浪位 {w_d} | ⭐最接近 🎯你的目標</div>",
                         unsafe_allow_html=True)
             except: pass
 
