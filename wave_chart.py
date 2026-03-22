@@ -529,30 +529,44 @@ def build_kline_chart(df, df_60=None, wave_label_d="N/A",
         # 從④浪位置之後找子浪轉折點
         w4_idx = next((w[0] for w in waves if w[2] == "④"), max(0, len(x_d)-20))
         _sub_H = H[w4_idx:]; _sub_L = L[w4_idx:]
-        if len(_sub_H) >= 6 and SCIPY_OK:
-            _sub_ord = max(2, len(_sub_H)//8)
+        if len(_sub_H) >= 5 and SCIPY_OK:
+            # 子浪偵測：order 要小一點才能抓到短期轉折
+            _sub_ord = max(2, len(_sub_H)//10)
             _sub_pivots = _find_pivots(_sub_H, _sub_L, _sub_ord)
             _SUB_LBLS = ["⑤起","5-1","5-2","5-3","5-4","5-5"]
-            _SUB_COLORS = {"⑤起":"#64748b","5-1":"#7dd3fc","5-2":"#fed7aa",
-                           "5-3":"#86efac","5-4":"#fdba74","5-5":"#fde68a"}
-            for _si2, (_sidx, _sp, _stype) in enumerate((_sub_pivots or [])[:6]):
-                _real_idx = w4_idx + _sidx
+            _SUB_COLORS = {
+                "⑤起":"#64748b","5-1":"#7dd3fc","5-2":"#fed7aa",
+                "5-3":"#86efac","5-4":"#fdba74","5-5":"#fde68a"
+            }
+            for _si2, (_rel_idx, _sp, _stype) in enumerate((_sub_pivots or [])[:6]):
+                # _rel_idx 是相對於 _sub_H 的 index，要加 w4_idx 才是實際位置
+                _real_idx = w4_idx + _rel_idx
                 if _real_idx >= len(x_d): continue
                 _slbl = _SUB_LBLS[_si2] if _si2 < len(_SUB_LBLS) else f"5-{_si2}"
                 _sc2 = _SUB_COLORS.get(_slbl, "#94a3b8")
                 _is_hi = (_stype == "H")
-                _say = -38 if _is_hi else 38
+                # 高點標注往上，低點往下
+                _say = -36 if _is_hi else 36
+                # 標注用實際 price（H或L）
+                _ann_y = H[_real_idx] if _is_hi else L[_real_idx]
                 fig.add_annotation(
-                    x=x_d[_real_idx], y=_sp,
+                    x=x_d[_real_idx], y=_ann_y,
                     text=f"<b>{_slbl}</b>",
                     showarrow=True, arrowhead=0,
                     arrowwidth=1, arrowcolor=_sc2,
                     ax=0, ay=_say,
                     font=dict(size=10, color=_sc2, family="Outfit"),
-                    bgcolor="rgba(6,11,24,0.75)",
+                    bgcolor="rgba(6,11,24,0.80)",
                     bordercolor=_sc2, borderwidth=1, borderpad=3,
                     row=1, col=1,
                 )
+                # 小圓點標記
+                fig.add_trace(go.Scatter(
+                    x=[x_d[_real_idx]], y=[_ann_y],
+                    mode="markers",
+                    marker=dict(color=_sc2, size=5, symbol="circle"),
+                    showlegend=False, hoverinfo="skip",
+                ), row=1, col=1)
 
     # ── ▶ NOW ──
     lh = float(H[-1]); lc_ = float(C[-1])
