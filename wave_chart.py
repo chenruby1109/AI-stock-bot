@@ -520,7 +520,11 @@ def build_kline_chart(df, df_60=None, wave_label_d="N/A",
         _add_fib_lines(fig, row=1, lo_p=lo_p, hi_p=hi_p)
 
     # ── ⑤浪子浪標注（當 main_wave 在⑤浪時，在日K圖上標示子浪） ──
-    _w4_price = w_map.get("④", 0)
+    try:
+        _w_map2 = {w[2]: w[1] for w in waves}
+        _w4_price = _w_map2.get("④", 0)
+    except:
+        _w4_price = 0
     if current == "⑤" and _w4_price > 0 and len(x_d) > 20:
         # 從④浪位置之後找子浪轉折點
         w4_idx = next((w[0] for w in waves if w[2] == "④"), max(0, len(x_d)-20))
