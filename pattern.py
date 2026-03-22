@@ -374,3 +374,144 @@ def detect_patterns(df) -> list:
     # 按信心度排序，最多回傳 3 個
     results.sort(key=lambda x: x["reliability"], reverse=True)
     return results[:3]
+
+
+# ─────────────────────────────────────────────────────
+# 圖表版：直接接受 numpy 陣列 + x_d (日期/時間序列)
+# ─────────────────────────────────────────────────────
+def detect_patterns_for_chart(H, L, C, x_d) -> list:
+    """
+    給 wave_chart.py 用，接受原始 H/L/C 陣列
+    回傳 dict 含 keylines(用 index)、pts(用 index)、target、stop
+    """
+    import pandas as pd
+    n = len(H)
+    if n < 20: return []
+
+    # 建立 df
+    df_tmp = pd.DataFrame({"High":H,"Low":L,"Close":C})
+    
+    order = max(3, n//20)
+    pts = _pivots(H, L, order)
+
+    results = []
+    
+    # === 頭肩頂/底 ===
+    for direction in ["top","bottom"]:
+        typ  = "H" if direction=="top" else "L"
+        cands = [p for p in pts if p[2]==typ]
+        if len(cands)<3: continue
+        for i in range(len(cands)-2):
+            ls,h,rs = cands[i],cands[i+1],cands[i+2]
+            if direction=="top":
+                if not (h[1]>ls[1] and h[1]>rs[1]): continue
+                if abs(_pct(ls[1],rs[1]))>18: continue
+            else:
+                if not (h[1]<ls[1] and h[1]<rs[1]): continue
+                if abs(_pct(ls[1],rs[1]))>18: continue
+            troughs=[p for p in pts if p[2]!=typ and ls[0]<p[0]<rs[0]]
+            if len(troughs)<2: continue
+            t1,t2=troughs[0],troughs[-1]
+            nk = (t1[1]+t2[1])/2
+            head_size=abs(h[1]-nk)
+            target=nk-head_size if direction=="top" else nk+head_size
+            results.append(dict(
+                name="頭肩頂" if direction=="top" else "頭肩底",
+                emoji="🏔️", bias="bearish" if direction=="top" else "bullish",
+                color="#f87171" if direction=="top" else "#4ade80",
+                desc=f"頸線 {nk:.2f}，目標 {target:.2f}",
+                reliability=85, target=target, stop=rs[1],
+                keylines=[(t1[0],t1[1],t2[0],t2[1],"neckline")],
+                pts=[(ls[0],ls[1]),(h[0],h[1]),(rs[0],rs[1])],
+            ))
+            break
+
+    # === 雙頂/雙底 ===
+    for direction in ["top","bottom"]:
+        typ="H" if direction=="top" else "L"
+        cands=[p for p in pts if p[2]==typ]
+        if len(cands)<2: continue
+        for i in range(len(cands)-1):
+            a,b=cands[i],cands[i+1]
+            if abs(_pct(a[1],b[1]))>5: continue
+            mid=[p for p in pts if p[2]!=typ and a[0]<p[0]<b[0]]
+            if not mid: continue
+            valley=mid[0]; nk=valley[1]
+            head=(a[1]+b[1])/2
+            target=nk-(head-nk) if direction=="top" else nk+(nk-head)
+            results.append(dict(
+                name="雙重頂(M頭)" if direction=="top" else "雙重底(W底)",
+                emoji="Ⓜ️" if direction=="top" else "Ⓦ",
+                bias="bearish" if direction=="top" else "bullish",
+                color="#f87171" if direction=="top" else "#4ade80",
+                desc=f"頸線 {nk:.2f}，目標 {target:.2f}",
+                reliability=78, target=target,
+                stop=max(a[1],b[1]) if direction=="top" else min(a[1],b[1]),
+                keylines=[(valley[0]-5, nk, b[0]+5, nk,"neckline")],
+                pts=[(a[0],a[1]),(b[0],b[1]),(valley[0],valley[1])],
+            ))
+            break
+
+    # === 三角形 ===
+    seg_n = min(60, n)
+    hi_pts = [p for p in pts if p[2]=="H" and p[0]>=n-seg_n][-5:]
+    lo_pts = [p for p in pts if p[2]=="L" and p[0]>=n-seg_n][-5:]
+    if len(hi_pts)>=2 and len(lo_pts)>=2:
+        hi_xs=[p[0] for p in hi_pts]; hi_ys=[p[1] for p in hi_pts]
+        lo_xs=[p[0] for p in lo_pts]; lo_ys=[p[1] for p in lo_pts]
+        sh,bh=_linreg(hi_xs,hi_ys); sl,bl=_linreg(lo_xs,lo_ys)
+        upper_end=sh*(n-1)+bh; lower_end=sl*(n-1)+bl
+        upper_start=sh*hi_xs[0]+bh; lower_start=sl*lo_xs[0]+bl
+        width=abs(upper_end-lower_end)
+        if width>0:
+            if abs(sh)<0.05 and sl>0.05:
+                name,bias,color,rel="上升三角形","bullish","#4ade80",72
+                target=upper_end+width; desc=f"壓力線 {upper_end:.2f}，突破看漲"
+            elif sh<-0.05 and abs(sl)<0.05:
+                name,bias,color,rel="下降三角形","bearish","#f87171",72
+                target=lower_end-width; desc=f"支撐線 {lower_end:.2f}，跌破看跌"
+            elif sh<-0.05 and sl>0.05:
+                name,bias,color,rel="對稱三角形(收斂)","neutral","#fbbf24",65
+                target=upper_end+width; desc=f"壓力 {upper_end:.2f} 支撐 {lower_end:.2f}"
+            elif sh>0.05 and sl<-0.05:
+                name,bias,color,rel="擴散三角形","neutral","#a78bfa",55
+                target=upper_end; desc=f"波動擴散，不確定性高"
+            else:
+                name=None
+            if name:
+                results.append(dict(
+                    name=name, emoji="📐", bias=bias, color=color,
+                    desc=desc, reliability=rel, target=target,
+                    stop=lower_end if bias!="bearish" else upper_end,
+                    keylines=[
+                        (hi_xs[0],upper_start,n-1,upper_end,"upper"),
+                        (lo_xs[0],lower_start,n-1,lower_end,"lower"),
+                    ],
+                    pts=[],
+                ))
+
+    # === 旗形/矩形 ===
+    mast_n2=min(15,n//4); flag_n=min(20,n//3)
+    if n>mast_n2+flag_n:
+        mast_move=_pct(float(C[-(mast_n2+flag_n)]),float(C[-flag_n]))
+        if abs(mast_move)>=8:
+            fH=H[-flag_n:]; fL=L[-flag_n:]
+            xs2=list(range(flag_n))
+            sh2,bh2=_linreg(xs2,list(fH)); sl2,bl2=_linreg(xs2,list(fL))
+            mast_sz=abs(float(C[-flag_n])-float(C[-(mast_n2+flag_n)]))
+            cp2=float(C[-1])
+            if mast_move>0 and sh2<-0.03 and sl2<-0.03:
+                results.append(dict(name="看漲旗形",emoji="🚩",bias="bullish",
+                    color="#4ade80",desc=f"旗桿漲幅{mast_move:.1f}%，整理後目標 {cp2+mast_sz:.2f}",
+                    reliability=70,target=cp2+mast_sz,stop=float(min(fL)),
+                    keylines=[(n-flag_n,bh2,n-1,bh2+sh2*(flag_n-1),"upper"),
+                               (n-flag_n,bl2,n-1,bl2+sl2*(flag_n-1),"lower")],pts=[]))
+            elif mast_move<0 and sh2>0.03 and sl2>0.03:
+                results.append(dict(name="看跌旗形",emoji="🏴",bias="bearish",
+                    color="#f87171",desc=f"旗桿跌幅{abs(mast_move):.1f}%，反彈後目標 {cp2-mast_sz:.2f}",
+                    reliability=70,target=cp2-mast_sz,stop=float(max(fH)),
+                    keylines=[(n-flag_n,bh2,n-1,bh2+sh2*(flag_n-1),"upper"),
+                               (n-flag_n,bl2,n-1,bl2+sl2*(flag_n-1),"lower")],pts=[]))
+
+    results.sort(key=lambda x:x["reliability"], reverse=True)
+    return results[:3]
